@@ -1,0 +1,11 @@
+"0","all[!is.na(all$SalePrice),] %>% 
+  group_by(Fence) %>%  #Fence 그룹핑
+  summarise(median = median(SalePrice), counts = n()) #price 중위값, 개수 변수 생성
+"
+"2","Warning message:
+"
+"2","In strsplit(code, ""\n"", fixed = TRUE) :"
+"2","
+ "
+"2"," input string 1 is invalid in this locale
+"

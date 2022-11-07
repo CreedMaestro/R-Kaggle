@@ -1,0 +1,2 @@
+"0","all$Remod <- ifelse(all$YearBuilt==all$YearRemodAdd, 0, 1) # 0 = 'No remodeling', 1 = 'remodeling'"
+"0","all$Age <- as.numeric(all$YrSold)-all$YearRemodAdd"

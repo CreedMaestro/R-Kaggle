@@ -1,0 +1,5 @@
+"0","X_test_num <- scale(X_test_num, center = mean.tr, scale = sd.tr)
+"
+"2","Error in FUN(x, aperm(array(STATS, dims[perm]), order(perm)), ...) : 
+  non-numeric argument to binary operator
+"

@@ -1,0 +1,15 @@
+"0","#나머지 2개의 관측치를 찾아보겠다.
+kable(all[!is.na(all$GarageType) & is.na(all$GarageFinish), 
+          c('GarageCars', 'GarageArea', 'GarageType', 'GarageCond', 'GarageQual', 'GarageFinish')])
+"
+"2","Error in `[.data.frame`(all, !is.na(all$GarageType) & is.na(all$GarageFinish),  : 
+  undefined columns selected
+"
+"2","In addition: "
+"2","Warning message:
+"
+"2","In strsplit(code, ""\n"", fixed = TRUE) :"
+"2","
+ "
+"2"," input string 1 is invalid in this locale
+"

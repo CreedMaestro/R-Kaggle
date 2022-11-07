@@ -1,0 +1,2 @@
+"0","train <- read.csv('./input/House_price/train.csv', stringsAsFactors = F)"
+"0","test <- read.csv('./input/House_price/test.csv', stringsAsFactors = F)"

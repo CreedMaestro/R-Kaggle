@@ -1,0 +1,1 @@
+"0","all$ToBathrooms <- all$FullBath + (all$HalfBath*0.5) + all$BsmtFullBath + (all$BsmtHalfBath*0.5)"

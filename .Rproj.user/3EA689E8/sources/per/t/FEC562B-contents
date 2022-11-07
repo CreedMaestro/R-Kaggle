@@ -1,0 +1,1352 @@
+---
+title: "캐글코리아 House Price Prediction with R"
+author: "Maestro"
+date: "2019년 5월 14일"
+output: 
+  html_document:
+    number_sections: true
+    toc: true
+    toc_depth: 3
+    theme: paper
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+```
+
+<br>
+
+# Introduction
+
+<br>
+
+ 설명과 첨언의 글이 많아 이후 경어는 생략하고 진행하겠습니다.
+
+ 참조 
+ 1. https://www.kaggle.com/erikbruin/house-prices-lasso-xgboost-and-a-detailed-eda/report
+ 
+ 2. https://www.kaggle.com/chocozzz/house-price-prediction-eda-updated-2019-03-12
+ 
+ 3. https://www.kaggle.com/psystat/house-price-prediction-eda-and-lasso-with-r
+ 
+<br>
+
+ 캐글코리아 주최 2회째 Competition으로 주제는 House price prediction이다.
+분석 언어는 'R'을 쓰며, 주 패키지는 분석용 dplyr와 시각화 ggplot2이며, 이 두 패키지가 포함된 
+tidyverse를 쓸 예정이다.
+사용할 패키지와 Data에 대한 설명, FE까지 진행 예정이며, 상세한 내용은 추후 설명한다.
+첫 Competition이기에 다른 분들의 자료를 참고하여 만들었으며, 참조한 커널은 링크를 첨부한다.
+
+---
+
+# Loading library & data
+
+## Load libraries
+
+<br>
+```{r}
+library(tidyverse)   # ggplot2, dplyr, tidyr, tibble, readr 외 다양한 패키지가 있는 복합 패키지
+library(corrplot)    # 시각화 사용(상관 계수 파악)
+library(data.table)  # data Load
+library(plotly)      # price 변수 인터랙티브 그래프 확인
+library(scales)      # 그래프 축 수치 변경
+library(gridExtra)   # 차트 멀티 표현
+library(Rmisc)       # multiplot
+library(zipcode)     # zipcode to city 변환
+library(ggiraphExtra)# 지도 매핑 & 시각화
+library(psych)       # Skewness
+library(caret)       # preProcess
+library(summarytools)# summary & 내용 개요
+library(xgboost)     # xgboost model
+library(tictoc)      # tic 함수
+```
+
+<br>
+## Load Data
+```{r}
+k_train <-  fread("./kako 2nd/train.csv")
+k_test <- fread("./kako 2nd/test.csv")
+```
+
+---
+
+# Data Structure and Description
+
+## Data Structure
+
+```{r}
+dim(k_train)  # 21개 변수의 15035 관측치다.
+dim(k_test)   # price를 제외한 20개 변수의 6468 관측치이며, k_train대비 비율은 5:2이다.
+str(k_train)  # 숫자 & 문자 변수 혼합 타입으로 구성된 2차원 이상의 데이터이다.
+str(k_test)   # 숫자 & 문자 변수 혼합 타입으로 구성된 2차원 이상의 데이터이다.
+```
+
+---
+
+## Combined the datasets
+
+```{r}
+k_test.labels <- k_test$id # modeling 대비 id 벡터에 저장
+k_all <- bind_rows(within(k_train, rm('id')), within(k_test, rm('id')))
+# rbind는 열 개수가 다르면 결합 불가. bind_rows는 없던 열 결측치로 대체하여 결합.
+dim(k_all)
+str(k_all)
+```
+
+## Data Description
+
+
++ ID : 집을 구분하는 번호
++ date : 집을 구매한 날짜
++ price : 집의 가격(Target variable)
++ bedrooms : 침실의 수
++ bathrooms : 화장실의 수 [(참고)](https://www.kaggle.com/c/2019-2nd-ml-month-with-kakr/discussion/83533)
++ sqft_living : 주거 공간의 평방 피트(면적)
++ sqft_lot : 부지의 평방 피트(면적)
++ floors : 집의 층 수
++ waterfront : 집의 전방에 강이 흐르는지 유무 (a.k.a. 리버뷰)
++ view : 집이 얼마나 좋아 보이는지의 정도
++ condition : 집의 전반적인 상태
++ grade : King County grading 시스템 기준으로 매긴 집의 등급(구조 & 디자인)
+( 하등급: 1~3등급, 중등급: 7 등급, 상등급: 11~13 등급 )
+[(참고)](https://www.kaggle.com/c/2019-2nd-ml-month-with-kakr/discussion/83536)
++ sqft_above : 지하실을 제외한 평방 피트(면적)
++ sqft_basement : 지하실의 평방 피트(면적)
++ yr_built : 지어진 년도
++ yr_renovated : 집을 재건축한 년도
++ zipcode : 우편번호
++ lat : 위도
++ long : 경도
++ sqft_living15 :  2015년 기준 주거 공간의 평방 피트(면적, 집을 재건축했다면, 변화가 있을 수 있음) 
++ sqft_lot15 :  2015년 기준 부지의 평방 피트(면적, 집을 재건축했다면, 변화가 있을 수 있음) 
+
+---
+
+# EDA(Exploratory Data Analysis)
+
+<br>
+
+## Missing Values
+
+```{r}
+sum(is.na(k_all))/(ncol(k_all)*nrow(k_all))  # train, test 결합하며 생긴 price의 결측치 같다.
+colSums(is.na(k_all))  #row 결합으로 생긴 price의 결측치만 보인다.
+# study 개념으로 시각화를 첨부한다.
+# 각 feature 결측치 비율 계산
+missing_values <- k_all %>% dplyr::summarise_all(funs(sum(is.na(.))/n()))
+# data frame 생성
+missing_values <- tidyr::gather(missing_values, key = 'feature', value = 'missing_pct')
+# 그래프 생성
+missing_values %>% 
+  ggplot(aes(x= reorder(feature, missing_pct), y = missing_pct)) + # missing_pct 내림차순 정렬
+  geom_bar(stat = 'identity', fill = 'red') + # 막대 그래프 생성
+  ggtitle('Rechecking missing values in each features') + # 제목 
+  theme(plot.title = element_text(face = 'italic',        # 글씨체
+                                  hjust = 0.5,            # 가로비율(Horizon)
+                                  size = 15,              # 폰트 크기
+                                  color = 'black')) +     # 폰트 컬러
+labs(x = 'Feature names', y = 'Rate') +                   # x, y 축 명명
+  coord_flip()                                            # x, y 축 반전
+# 시각화 확인 결과 데이터셋 합산하며 생긴 price 제외 NA는 없다.
+```
+
+<br>
+
+## Data detail overview
+
+```{r}
+head(k_all,10)  # Chapter 3.3 설명대로 값들은 예상과 맞지만, date는 수정할 필요가 있어 보인다.
+summary(k_all)  # 수치형이지만 실제론 범주형인 값들이 보인다.
+```
+
+<br>
+
+## Make a fuction for plotting actually categoric data
+
+```{r}
+plot.categoric <- function(cols, df){
+  for (col in cols) {
+    order.cols <- names(sort(table(k_all[,col]), decreasing = TRUE))
+  
+    num.plot <- qplot(df[,col]) +
+      geom_bar(fill = 'cornflowerblue') +
+      geom_text(aes(label = ..count..), stat='count', vjust=-0.5) +
+      theme_minimal() +
+      scale_y_continuous(limits = c(0,max(table(df[,col]))*1.1)) +
+      scale_x_discrete(limits = order.cols) +
+      xlab(col) +
+      theme(axis.text.x = element_text(angle = 30, size=12))
+  
+    print(num.plot)
+  }
+}
+```
+
+<br>
+
+## Modify a date format
+
+```{r}
+k_all[, date:=substr(date, 1, 8)]   # date에서 불필요 부분 제거하여 연간 구매로 변수 생성
+k_all %>% select(date) %>% head(10)
+```
+
+<br>
+
+## detail price & visualization
+
+```{r}
+summary(k_all$price)  # price 분포 확인
+price.g <- ggplot(data=k_all[!is.na(k_all$price)], aes(x=price)) + 
+  geom_histogram(fill = 'red', binwidth = 10000) +
+  scale_x_continuous(breaks = seq(0, 8000000, by = 1000000), labels = comma)
+ggplotly(price.g)     # 인터랙티브 그래프로 금액대별 거래량 분포 확인
+```
+
+ 금액대는 35만에서 거래가 가장 많았으며, 평균은 54만이고, 75% 거래량 까지가 64만으로 
+ 주로 100만 안에서 거래량이 많았다. 200만이 넘어서는 10건 이하로 거래가 되었고, 
+ 4백만 이후부터는 1건씩 거래가 이루어졌다.
+ 
+<br>
+
+## Correlation with price
+ 상관 관계 히트맵
+ 
+```{r} 
+str(k_all)  # pearson(수치형) & spearman(수치 & 범주형 혼합) 계수 생성위해 확인
+k_numericVars <- which(sapply(k_all, is.numeric))  # index vector numeric variables
+k_numericVarnames <- names(k_numericVars) # 이름 명명
+cat('There are', length(k_numericVars), 'numeric variables')
+
+k_all.numVar <- k_all[, ..k_numericVars]
+k_cor.numVar <- cor(k_all.numVar, use = 'pairwise.complete.obs', method="spearman") # 결측값 제외 상관행렬 생성
+# price 기준 내림차순 정렬
+k_cor.sorted <- as.matrix(sort(k_cor.numVar[, 'price'], decreasing = TRUE)) 
+k_corHigh <- names(which(apply(k_cor.sorted, 1, function(x) abs(x) > 0)))
+k_cor.numVar <- k_cor.numVar[k_corHigh, k_corHigh] 
+# 상관 행렬 히트맵
+corrplot.mixed(k_cor.numVar, 
+               tl.col = 'black',  # 변수명 색깔
+               tl.pos = 'lt',     # 변수명 왼쪽 표시
+               tl.cex = 0.7,      # 변수명 text 크기
+               cl.cex = 0.7,      # y축 상관계수 text 크기
+               number.cex = .5    # matrix안 상관계수 text 크기
+               )     
+```
+
+<br>
+
+ 상관 행렬 확인 결과 주거 공간의 크기, 등급, 지상 평방피트 등 상위에
+ 공간의 면적과 관련된 항목들이 있음을 알 수 있다. 그리고 침실의 개수보단 욕실이 가격과
+ 상관 관계가 더 높고, 한국이라면 영향이 컸을 리버뷰(waterfront)는 상관 관계가 그리 높지 않았다.
+ 의문은 위도와는 상관 관계가 0.45이지만, 경도와는 0.07로 이건 지역의 특성인것 같은데 확인해 봐야 할 것 같다.
+
+<br>
+
+## Label Encoding / Factorizing variables {.tabset}
+
+
+<br>
+
+### grade variables
+```{r, warning=FALSE, message=FALSE}
+# grade boxplot (하등급: 1~3등급, 중등급: 7 등급, 상등급: 11~13 등급)
+k_g1 <- ggplot(data=k_all[!is.na(k_all$price),], aes(x= factor(grade), y = price)) + #grade 범주형 변수로 변환
+  geom_boxplot(col = 'black') + labs(x = 'grade') + 
+  scale_y_continuous(breaks = seq(0, 8000000, by = 1000000), labels = comma) +
+  geom_text(aes(label = ifelse(k_all$grade[!is.na(k_all$price)]== 11 & k_all$price[!is.na(k_all$price)] > 7000000, rownames(k_all),''), vjust = 1.5))
+
+k_g2 <- ggplot(data = k_all, aes(x = as.factor(grade))) +
+  geom_histogram(stat = 'count') +
+  geom_label(stat = 'count', aes(label = ..count.., y = ..count..), size =3) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+grid.arrange(k_g1, k_g2)
+```
+
+<br>
+
+11등급인데 가격이 너무 높은 이상치가 있다. 확인해 봐야 할 것 같다.
+
+<br>
+
+### sqft_living variables
+
+```{r}
+# sqft_living 분포 확인
+ggplot(data=k_all[!is.na(k_all$price)], aes(x = sqft_living, y=price)) +
+  geom_point(col = 'blue') + 
+  geom_smooth(method = 'lm', se= FALSE, color = 'black', aes(group = 1)) +
+  scale_y_continuous(breaks = seq(0, 8000000, by = 1000000), labels = comma) +
+  geom_text(aes(label = ifelse(k_all$sqft_living[!is.na(k_all$price)] > 10000, rownames(k_all), ''), vjust=1.5))
+```
+
+<br>
+price 관측치 '8913'은 면적 대비 가격이 낮아 보인다. 가장 상위 가격인 '5109'와 비교해보겠다.
+```{r}
+k_all[c(5109, 8913), c('price','sqft_living', 'grade','bathrooms', 'bedrooms')]
+```
+면적, 등급, 욕실 상태와 침실 수도 큰 차이는 안나지만 가격이 3배 차이 나는건 확인해 봐야겠다.
+
+<br>
+
+### sqft_living15 variables
+```{r}
+# sqft_living15 분포 확인
+ggplot(data = k_all[!is.na(k_all$price),], aes(x = sqft_living15, y = price)) + 
+  geom_point(col = 'blue') +
+  geom_smooth(method = 'lm', se = FALSE, color = 'black', aes(group = 1)) + 
+  scale_y_continuous(breaks = seq(0, 8000000, by = 1000000), labels = comma) +
+  geom_text(aes(label = ifelse(sqft_living15[!is.na(k_all$price)] > 6000, rownames(k_all), ''), vjust = 1.5))
+```
+
+<br>
+
+living15에서도 면적 대비 가격이 낮은 값들이 보인다. living에선 이상치가 2건 정도였는데,
+여기선 꽤 많은 값들이 있다. 여기선 변별하기가 힘들것 같아 추후 다른 값에서 비교해보겠다.
+
+<br>
+
+### sqft_above variables
+```{r}
+# sqft_above 분포 확인
+ggplot(data = k_all[!is.na(k_all$price),], aes(x = sqft_above, y = price)) +
+  geom_point(col = 'blue') + 
+  geom_smooth(method = 'lm', se = FALSE, color = 'black', aes(group = 1)) + 
+  scale_y_continuous(breaks = seq(0, 8000000, by = 1000000), labels = comma) +
+  geom_text(aes(label = ifelse(k_all$sqft_above[!is.na(k_all$price)] > 7500, rownames(k_all), ''), vjust= 1.5))
+```
+
+<br>
+
+### bathrooms variables
+```{r, warning=FALSE, message=FALSE}
+# bathrooms boxplot(0.5:세면대 화장실, 0.75: 0.5+샤워실, 1: 0.75+욕조)
+k_b1 <- ggplot(data = k_all[!is.na(k_all$price),], aes(x = factor(bathrooms), y = price)) + #bathrooms 범주형 변수로 변환
+  geom_boxplot( col = 'black') +labs(x = 'bathrooms') +
+  scale_y_continuous(breaks = seq(0,8000000, by = 1000000), labels = comma) +
+  geom_text(aes(label = ifelse(bathrooms[!is.na(k_all$price)]<=5.25 & price>5000000, rownames(k_all), ''), vjust = 1.5)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+k_b2 <- ggplot(data = k_all, aes(x = as.factor(bathrooms))) +
+  geom_histogram(stat = 'count') +
+  geom_label(stat = 'count', aes(label = ..count.., y = ..count..), size = 3) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+grid.arrange(k_b1, k_b2)
+```
+
+<br>
+
+4.25부터 5.5까지 이상치가 존재하고, 5.5와 5.75는 최대치가 높아보인다. 
+확인해 봐야 할 것 같다.
+
+<br>
+
+### lat variables
+```{r}
+# lat 
+ggplot(data = k_all[!is.na(k_all$price),], aes(x = lat, y = price)) + 
+  geom_point(col = 'blue') +
+  geom_smooth(method = 'lm', se = FALSE, color = 'black', aes(group = 1)) +
+  scale_y_continuous(breaks = seq(0, 8000000, by = 1000000), label = comma) +
+  geom_text(aes(label = ifelse(price > 6000000, rownames(k_all), ''), vjust = 1.5))
+```
+
+<br>
+
+위도가 상승할수록 가격도 오르는 걸 확인할 수 있다. 추후에 연관성이 있는 항목들을
+재검토 하겠다.
+
+<br>
+
+### bedrooms variables
+```{r, warning=FALSE, message=FALSE}
+# bedrooms boxplot
+k_d1 <- ggplot(data = k_all[!is.na(k_all$price),], aes(x = factor(bedrooms), y = price)) + # bedrooms 범주형 변수로 변환
+  geom_boxplot(col = 'black') + labs(x = 'bedrooms') + 
+  scale_y_continuous(breaks = seq(0,8000000, by = 1000000), labels = comma) +
+  geom_text(aes(label = ifelse(price > 6000000, rownames(k_all), ''), vjust = 1.5))
+
+k_d2 <- ggplot(data = k_all, aes(x = as.factor(bedrooms))) +
+  geom_histogram(stat = 'count') +
+  geom_label(stat = 'count', aes(label = ..count.., y = ..count..), size = 3) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+grid.arrange(k_d1, k_d2)
+```
+
+<br>
+
+3,4,5,6에서 이상치가 많이 보이고, 5,6은 특출난 수치들이 있다. 확인해 봐야 할 것 같다.
+
+<br>
+
+### floors variables
+
+```{r, warning=FALSE, message=FALSE, out.width="100%"}
+k_f1 <- ggplot(data = k_all[!is.na(k_all$price),], aes(x = factor(floors), y = price)) +
+  geom_boxplot(col = 'black') + labs(x = 'floors') +
+  scale_y_continuous(breaks = seq(0, 8000000, by = 1000000), labels = comma) +
+  geom_text(aes(label = ifelse(k_all$floors[!is.na(k_all$price)]==2.5 & price > 7000000, rownames(k_all), ''), vjust = 1.5))
+
+k_f2 <- ggplot(data= k_all, aes(x = as.factor(floors))) +
+  geom_histogram(stat = 'count') +
+  geom_label(stat = 'count', aes(label = ..count.., y = ..count..), size = 3) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+grid.arrange(k_f1, k_f2)
+```
+
+'5109'는 floors 변수에서도 이상치로 나타난다. 면적대비 가격이 낮으면서 2.5층의 값이다.
+
+<br>
+
+### view variables
+```{r, warning=FALSE, message=FALSE, out.width="100%"}
+# view boxplot
+k_v1 <- ggplot(data = k_all[!is.na(k_all$price),], aes(x = factor(view), y = price)) + # view 범주형 변수로 변환
+  geom_boxplot(col = 'black') + labs(x = 'view') +
+  scale_y_continuous(breaks = seq(0,8000000, by = 1000000), label = comma) +
+  geom_text(aes(label = ifelse(price > 5500000, rownames(k_all), ''), vjust = 1.5))
+
+k_v2 <- ggplot(data = k_all, aes(x = as.factor(view))) +
+  geom_histogram(stat = 'count') +
+  geom_label(stat = 'count', aes(label = ..count.., y = ..count..), size = 3) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+grid.arrange(k_v1, k_v2)
+```
+
+<br>
+
+0,2,3,4가 view 대비 특출난 이상치들이 있다. 확인해 봐야 할 것 같다.
+
+<br>
+
+### sqft_basement variables
+```{r}
+# sqft_basement 분포 확인
+ggplot(data = k_all[!is.na(k_all$price),], aes(x = sqft_basement, y = price)) + 
+  geom_point(col = 'blue') +
+  geom_smooth(method = 'lm', se = FALSE, color = 'black', aes(group = 1)) +
+  scale_y_continuous(breaks = seq(0,8000000, by = 1000000), label = comma) +
+  geom_text(aes(label = ifelse(price > 6000000, rownames(k_all), ''), vjust = 1.5))
+``` 
+
+<br>
+
+지하실 면적과 가격간의 상관은 있어보이지만, 0에 많은 수치가 몰려있다.
+지하실이 없을 경우를 0으로 표현한 것 같은데, 확인해 봐야 할 것 같다.
+
+<br>
+
+### waterfront variables
+
+```{r, warning=FALSE, message=FALSE, out.width="100%"}
+k_w1 <- ggplot(data = k_all[!is.na(k_all$price),], aes(x= factor(waterfront), y = price)) +
+  geom_boxplot(col = 'black') + labs(x = 'waterfront') +
+  scale_y_continuous(breaks = seq(0,8000000, by = 1000000), labels = comma)
+
+k_w2 <- ggplot(data = k_all, aes(x = as.factor(waterfront))) +
+  geom_histogram(stat = 'count') +
+  geom_label(stat = 'count', aes(label = ..count.., y = ..count..), size = 3) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+grid.arrange(k_w1, k_w2)
+```
+
+강이 보이는 곳이 평균적으로 가격이 높지만, 강이 안 보이더라도 비싼 곳들이 있다.
+
+### yr_renovated variables
+
+```{r}
+ggplot(data=k_all[!is.na(k_all$price),], aes(x = factor(yr_renovated), y = price)) +
+  geom_point(col = 'blue') +
+  geom_smooth(method = 'lm', se = FALSE, color = 'black', aes(group = 1)) +
+  scale_y_continuous(breaks = seq(0, 8000000, by = 1000000), labels = comma) 
+k_all %>% select(yr_renovated) %>% table()
+```
+
+값이 0인 값들이 많다. 재건축 유무를 구분하여 변수를 새로 만들어서 확인해봐야 할 것 같다.
+년도는 테이블로 확인하였다.
+
+<br>
+
+### yr_built variables
+
+```{r}
+ggplot(data=k_all[!is.na(k_all$price),], aes(x = factor(yr_built), y =price)) +
+  geom_point(col = 'blue') +
+  geom_smooth(method = 'lm', se= FALSE, color ='black', aes(group = 1)) +
+  scale_y_continuous(breaks = seq(0, 8000000, by = 1000000), labels = comma) +
+  theme(axis.text.x = element_text(angle = 45, hjust =1))
+k_all %>% select(yr_built) %>% table()
+```
+
+집값과의 상관 관계는 크게 없어 보인다.
+차트에선 년도가 잘 안보여 수치로 보았다. 1900년~ 2015년까지 분포되어 있다.
+
+<br>
+
+### sqft_lot variables
+
+```{r}
+ggplot(data=k_all[!is.na(k_all$price),], aes(x = sqft_lot, y = price)) +
+  geom_point(col = 'blue') +
+  geom_smooth(method = 'lm', se = FALSE, color = 'black', aes(group=1)) +
+  scale_y_continuous(breaks = seq(0, 8000000, by = 1000000), labels = comma) +
+  geom_text(aes(label = ifelse(k_all$sqft_lot[!is.na(k_all$price)] > 1500000, rownames(k_all), ''), vjust= 1.5))
+summary(k_all$sqft_lot)
+```
+
+상관 관계는 보이지만, 75%의 수가 0~1만 사이에 몰려있다. Min과 Max의 차가 굉장히 크다.
+
+<br>
+
+### sqft_lot15
+
+```{r}
+ggplot(data=k_all[!is.na(k_all$price),], aes(x = sqft_lot15, y = price)) +
+  geom_point(col = 'blue') +
+  geom_smooth(method = 'lm', se = FALSE, color = 'black', aes(group = 1)) +
+  scale_y_continuous(breaks = seq(0, 8000000, by = 1000000), labels = comma)
+```
+
+<br>
+
+### long variables
+
+```{r}
+ggplot(data = k_all[!is.na(k_all$price),], aes(x = long, y = price)) +
+  geom_point(col = 'blue') +
+  geom_smooth(method = 'lm', se = FALSE, color = 'black', aes(group = 1)) +
+  scale_y_continuous(breaks = seq(0, 8000000, by = 10000000), labels = comma)
+```
+
+lat과는 달리 long은 큰 상관 관계가 보이지 않는다.
+
+<br>
+
+### condition variables
+
+```{r, warning=FALSE, message=FALSE, out.width="100%"}
+k_c1 <- ggplot(data= k_all[!is.na(k_all$price),], aes(x = factor(condition), y= price)) +
+  geom_boxplot(col= 'black') + labs(x = 'condition') +
+  scale_y_continuous(breaks = seq(0, 8000000, by = 1000000), labels = comma) +
+  geom_text(aes(label = ifelse(k_all$condition[!is.na(k_all$price)] >= 3 & price > 6000000, rownames(k_all), ''), vjust = 0.5, hjust=1.5))
+
+k_c2 <- ggplot(k_all, aes(x = as.factor(condition))) + 
+  geom_histogram(stat = 'count') +
+  geom_label(stat = 'count', aes(label = ..count.., y = ..count..), size = 3) +
+  theme(axis.text.x = element_text(angle = 45, hjust =1))
+grid.arrange(k_c1, k_c2)
+```
+
+<br>
+
+### zipcode variables
+
+```{r, warning=FALSE, message=FALSE, out.width="100%"}
+k_z1 <- ggplot(data = k_all[!is.na(k_all$price),], aes(x = as.factor(zipcode), y = price)) +
+  geom_point(color = 'blue') +
+  geom_smooth(methdo = 'lm', se= FALSE, color = 'black', aes(group = 1)) +
+  theme_light()+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  scale_y_continuous(breaks = seq(0, 8000000, by = 10000000), labels = comma)
+
+k_z2 <- ggplot(data = k_all[!is.na(k_all$price),], aes(x = as.factor(zipcode), group= factor(zipcode), y = price)) +
+  geom_boxplot(color = 'black') +
+  theme_light()+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  scale_y_continuous(breaks = seq(0, 8000000, by = 1000000), labels = comma)
+grid.arrange(k_z1, k_z2)
+```
+
+zipcode는 추후 다시 살펴봐야겠다.
+
+<br>
+
+## high correlations related variables visualization{.tabset}
+
+### sqft_living, and other surface related variables (in square feet)
+
+섹션 4.6에서 살펴본 바와 같이 상관 계수 상위에 면적과 관련한 변수가 많이 분포되어 있다.
+실제적으로 집을 구매시 집의 면적은 가격과 더불어 아주 중요하다. 
+여기서는 면적 관련한 변수들을 한눈에 확인하여 또 다른 인사이트를 얻을 수 있을지 알아보겠다.
+욕실과 침실은 면적에는 포함되지 않지만, living_area와 상관 관계가 높기(0.75, 0.65)에 추가를 하였다.
+
+```{r, warning=FALSE, message=FALSE, out.width="100%"}
+k_s1 <- ggplot(data = k_all[!is.na(k_all$price),], aes(x = sqft_living)) +
+  geom_density() + labs(x= 'Square feet living area')
+k_s2 <- ggplot(data = k_all[!is.na(k_all$price),], aes(x = sqft_living15)) +
+  geom_density() + labs(x='Square feet living area(year:2015)')
+k_s3 <- ggplot(data = k_all[!is.na(k_all$price)& k_all$sqft_lot<100000], aes(x = sqft_lot)) +
+  geom_density() + labs(x = 'Square feet lot') # 시각화 위해 10만 이상의 값 제거
+k_s4 <- ggplot(data = k_all[!is.na(k_all$price)& k_all$sqft_lot15<100000], aes(x = sqft_lot15)) +
+  geom_density() + labs(x = 'Square feet lot(year:2015)') # 시각화 위해 10만 이상의 값 제거
+k_s5 <- ggplot(data = k_all[!is.na(k_all$price),], aes(x = sqft_above)) +
+  geom_density() + labs(x = 'Square feet above')
+k_s6 <- ggplot(data = k_all[!is.na(k_all$price),], aes(x = sqft_basement)) +
+  geom_density() + labs(x = 'Square feet basement')
+k_s7 <- ggplot(data = k_all[!is.na(k_all$price),], aes(x = as.factor(bedrooms))) +
+  geom_histogram(stat = 'count') + labs(x = 'Bedrooms')
+k_s8 <- ggplot(data = k_all[!is.na(k_all$price),], aes(x = as.factor(bathrooms))) +
+  geom_histogram(stat = 'count') +labs(x = 'Bathrooms') +
+  theme(axis.text.x = element_text(angle =90, hjust = 1))
+
+k_layout <- matrix(c(1,3,2,4,5,6,7,8),4,2, byrow = TRUE) # 4행 2열 ()안의 순으로 행부터 matrix 생성
+multiplot(k_s1, k_s2, k_s3, k_s4, k_s5, k_s6, k_s7, k_s8, layout = k_layout)
+```
+
+면적은 전반적으로 왼쪽으로 많이 치우친 모양이지만, 앞에서도 확인했듯이 몇 몇 이상치가 수치를 끌어올리는 것으로 보인다.
+이상치는 추후에 확인 후 제거하겠다.
+
+<br>
+
+### grade, and other Quality variables
+
+집의 등급과 전반적인 상태를 나타내는 변수가 3개 있어 같이 시각화 해보겠다.
+
+```{r, warning=FALSE, message=FALSE, out.width="100%"}
+k_q1 <- ggplot(data = k_all[!is.na(k_all$price),], aes(x = as.factor(grade))) +
+  geom_histogram(stat = 'count') + labs(x = 'Grade')
+k_q2 <- ggplot(data = k_all[!is.na(k_all$price),], aes(x = as.factor(condition))) +
+  geom_histogram(stat = 'count') + labs(x = 'Condition')
+k_q3 <- ggplot(data = k_all[!is.na(k_all$price),], aes(x = as.factor(view))) +
+  geom_histogram(stat = 'count') +labs(x = 'View')
+
+k_layout <- matrix(c(1,2,3), 1,3, byrow = TRUE)
+multiplot(k_q1, k_q2, k_q3, layout = k_layout)
+```
+
+'grade'변수는 7,8에 다수가 몰려 있으며, 'condition' 변수는 3에, 'View'는 0에 다수가 몰려 있다.
+'View'가 0에 많은 변수가 몰려 있는게 기준이 어떻게 되는지 궁금하다.
+
+<br>
+
+### Seperated date variables
+
+연별, 월별 구매량을 date변수를 분할하여 알아보겠다.
+
+```{r, warning=FALSE, message=FALSE, out.width="100%"}
+k_all[, Yrbuy:=substr(date, 1,4)]    # 연간 구매 확인 위해 변수 생성
+k_all[, Mobuy:=substr(date, 5, 6)]   # 월간 구매 확인 위해 변수 생성 
+k_all[, Yrmbuy:=substr(date, 1, 6)]  # 추후 사용
+
+k_y1 <- ggplot(data = k_all[!is.na(k_all$price),], aes(x = Yrbuy, y = price)) +
+  geom_bar(stat = 'summary', fun.y = 'median', fill = 'blue') +
+  geom_label(stat = 'count', aes(label= ..count.., y = ..count..)) +
+  coord_cartesian(ylim = c(0, 600000)) + 
+  geom_hline(yintercept = 450000, linetype ='dashed', color = 'red') + #price 중위
+  scale_y_continuous(breaks = seq(0, 800000, by = 100000), labels = comma) +
+  theme_light()+ theme(axis.text.x = element_text(vjust = 0.5)) + labs(x = 'Year median') 
+
+k_y2 <- ggplot(data = k_all[!is.na(k_all$price),], aes(x = Mobuy, y = price)) +
+  geom_bar(stat = 'summary', fun.y = 'median', fill = 'blue') +
+  geom_label(stat = 'count', aes(label = ..count.., y = ..count..), size=2) +
+  coord_cartesian(ylim = c(0, 600000)) + 
+  geom_hline(yintercept = 450000, linetype = 'dashed', color = 'red') +
+  scale_y_continuous(breaks = seq(0, 800000, by = 100000), labels = comma) +
+  theme_light() + theme(axis.text.x = element_text(vjust=0.5)) + labs(x = 'Month median')
+
+k_y3 <- ggplot(data = k_all[!is.na(k_all$price),], aes(x = Yrbuy, y = price)) +
+  geom_bar(stat = 'summary', fun.y = 'mean', fill = 'blue') +
+  geom_label(stat = 'count', aes(label = ..count.., y = ..count..)) +
+  coord_cartesian(ylim = c(0, 600000)) + 
+  geom_hline(yintercept = 540683, linetype='dashed', color = 'red') + #price 평균값
+  scale_y_continuous(breaks = seq(0, 800000, by = 100000), labels = comma) +
+  theme_light() + theme(axis.text.x = element_text(vjust = 0.5)) + labs(x = 'Year mean')
+
+k_y4 <- ggplot(data = k_all[!is.na(k_all$price),], aes(x = Mobuy, y = price))+
+  geom_bar(stat = 'summary', fun.y = 'mean', fill = 'blue') +
+  geom_label(stat = 'count', aes(label = ..count.., y = ..count..), size=2) +
+  coord_cartesian(ylim = c(0, 600000)) + 
+  geom_hline(yintercept = 540683, linetype = 'dashed', color = 'red') + #price 평균값
+  scale_y_continuous(breaks = seq(0, 800000, by = 100000), labels = comma) +
+  theme_light() + theme(axis.text.x = element_text(vjust = 0.5)) + labs(x = 'Month mean')
+
+k_layout <- matrix(c(1,2,3,4),2,2, byrow = TRUE)
+multiplot(k_y1, k_y2, k_y3, k_y4, layout = k_layout)
+```
+
+
+2015년 대비 2014년의 구매 빈도가 2배 이상 높고, 월별 구매는 1,2월에는 다른 월 대비 구매 빈도가 낮다.
+구매가의 중위값으로 보면 유의미한 결과는 따로 없어 보인다.
+
+<br>
+
+# Feature Engineering
+
+건축년도로 구분한 집의 년수와, 리모델링 여부, 신축 여부를 구분 지어 변수를 만들겠다.
+
+## Adding 'House Age', Remodeled(Yes/No)', IsNew
+
+```{r}
+k_all$Remod <- ifelse(k_all$yr_built > k_all$yr_renovated, 0, 1) # 0 = '리모델링 X', 1 = '리모델링'
+temp <- ifelse(k_all$yr_renovated==0, k_all$yr_built, k_all$yr_renovated) #재건축이 아니면 디폴트로 건축년도 설정
+k_all$Age <- as.numeric(k_all$Yrbuy)-temp
+
+ggplot(k_all[!is.na(k_all$price),], aes(x = Age, y=price)) +
+  geom_point(col = 'blue') +
+  geom_smooth(method = 'lm', se = FALSE, color = 'black', aes(group = 1)) +
+  scale_y_continuous(breaks = seq(0, 8000000, by = 1000000), labels = comma) +
+  geom_text(aes(label=ifelse(price > 7000000, rownames(k_all), ''), vjust = 0.5))
+```
+
+재건축을 하거나, 건축된지 30년 미만의 집이 고가에 거래된 경우가 많다.
+
+```{r}
+ggplot(k_all[!is.na(k_all$price),], aes(x = as.factor(Remod), y = price)) +
+  geom_bar(stat = 'summary', fun.y = 'median', fill = 'blue') +
+  geom_label(stat = 'count', aes(label = ..count.., y = ..count..), size = 6) +
+  scale_y_continuous(breaks = seq(0, 8000000, by = 1000000), labels = comma) +
+  theme_grey(base_size = 18)+
+  geom_hline(yintercept = 450000, linetype = 'dashed')
+```
+
+재건축된 집이 더 비싸다.
+
+```{r}
+k_all$IsNew <- ifelse(k_all$yr_renovated>=2014, 1, 0) # 1은 신축, 0은 기
+table(k_all$IsNew)
+```
+<br>
+107채의 14년 이후 신축집은 train과 test셋에 분배되어 있으며, 기존 집들보다 더 비싼 경향을 보인다.
+
+```{r}
+ggplot(k_all[!is.na(k_all$price),], aes(x = as.factor(IsNew), y = price)) +
+  geom_bar(stat = 'summary', fun.y = 'median', fill = 'blue') +
+  geom_label(stat = 'count', aes(label = ..count.., y = ..count..), size = 6) +
+  scale_y_continuous(breaks = seq(0, 8000000, by = 1000000), labels = comma) +
+  theme_light() +
+  geom_hline(yintercept = 450000, linetype='dashed') # 점선은 판매가의 중위값
+
+```
+
+## Adding 'city' variables
+zipcode 라이브러리를 써서 zipcode별 city를 변수로 추가하겠다.
+```{r}
+zc <- data.frame(k_all$zipcode) # zipcode 변수 추출
+data(zipcode) # zipcode 라이브러리에서 변수 생성
+colnames(zc)[1]='zip' # join 사전작업 컬럼명 동일하게 변경
+zipcode$zip=as.integer(zipcode$zip) # join 사전작업 character > int로 변환
+zc = left_join(zc,zipcode,by='zip') # left_join으로 'zc' 기준 결합
+zc = zc %>% select(-'state') # 모든 state가 'WA'로 동일하므로 state 컬럼 삭제
+k_all <- mutate(k_all, city= zc$city) # city 변수 추가
+```
+
+<br>
+city별 가격 분포 확인
+```{r}
+
+ggplot(data = k_all[!is.na(k_all$price),], aes(x = city, group= city, y = price)) +
+  geom_boxplot(color = 'black') +
+  theme_light()+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  scale_y_continuous(labels = comma)
+
+ggplot(k_all[!is.na(k_all$price),], aes(x = city)) + 
+  geom_histogram(stat = 'count') +
+  geom_label(stat = 'count', aes(label = ..count.., y = ..count..), size = 3) +
+  theme(axis.text.x = element_text(angle = 45, hjust =1))
+
+```
+
+<br>
+'Seattle'과 'Bellevue'는 분포가 많고, 이상치들로 가격대가 높은 집들이 좀 있어 보이고, 
+'Medina'는 분포 대비 부촌으로 보인다.(36채로 가장 적은 분포)
+
+```{r}
+k_zc1 <- ggplot(k_all[!is.na(k_all$price),], aes(x = reorder(city, price, FUN = median), y = price))+
+  geom_bar(stat = 'summary', fun.y = 'median', fill = 'blue') +
+  labs(x = 'city', y = 'Median_price') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_y_continuous(labels = comma) +
+  geom_label(stat = 'count', aes(label = ..count.., y = ..count..), size = 2.5) +
+  geom_hline(yintercept = 450000, linetype = 'dashed', color = 'red')
+  
+
+k_zc2 <- ggplot(k_all[!is.na(k_all$price),], aes(x = reorder(city, price, FUN = mean), y = price))+
+  geom_bar(stat = 'summary', fun.y = 'mean', fill = 'blue') +
+  labs(x = 'city', y = 'Mean_price') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_y_continuous(labels = comma) +
+  geom_label(stat = 'count', aes(label = ..count.., y = ..count..), size = 2.5) +
+  geom_hline(yintercept = 450000, linetype = 'dashed', color = 'red')
+
+grid.arrange(k_zc1, k_zc2)
+```
+<br>
+평균값과 중위값은 'Medina'가 가장 높고, 그 다음이 지도상으로 그 바로 아래 위치한 'Mercer Island'이다.
+이 변수에서 위도와 가격과의 상관 관계가 높게 나왔을 것으로 추측된다.(경도는 비슷, 위도가 약간 아래)
+분포가 많았던 'Seattle'은 분포와 가격과의 상관은 크게 없어 보인다.
+```{r}
+k_zc3 <- ggplot(k_all[!is.na(k_all$price),], aes(x = reorder(city, price, FUN = max), y = price))+
+  geom_bar(stat = 'summary', fun.y = 'max', fill = 'blue') +
+  labs(x = 'city', y = 'Max_price') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_y_continuous(labels = comma) +
+  geom_label(stat = 'count', aes(label = ..count.., y = ..count..), size = 2.5) +
+  geom_hline(yintercept = 450000, linetype = 'dashed', color = 'red')
+
+
+k_zc4 <- ggplot(k_all[!is.na(k_all$price),], aes(x = reorder(city, price, FUN = min), y = price))+
+  geom_bar(stat = 'summary', fun.y = 'min', fill = 'blue') +
+  labs(x = 'city', y = 'Min_price') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_y_continuous(labels = comma) +
+  geom_label(stat = 'count', aes(label = ..count.., y = ..count..), size = 2.5) +
+  geom_hline(yintercept = 450000, linetype = 'dashed', color = 'red')
+
+grid.arrange(k_zc3, k_zc4)
+```
+<br>
+최대값을 보면 처음에 봤던 박스 플롯의 분포를 확인할 수 있고, 최소값을 보면 'Medina'와 'Mercer Island'는 
+타 지역대비 높은 값을 보이는 걸 알 수 있다.
+상기의 도시별 차트들을 보면 시애틀과 벨뷰에 많은 인구가 살고, 메디나와 머서 아일랜드에는 높은 가격대의 집들이 있어 이들 일대가 시가지이고, 이 곳에서 멀어질수록 가격도 낮아지고, 분포도 적은 것을 알 수 있다.
+
+
+## Adding 'Expensive city' variables
+
+'Medina'와 'Mercer Island'는 가격과  상관도가 높은 변수이다.
+그래서 이 둘을 묶은 변수를 하나 추가하겠다.
+```{r}
+k_all$mecity <- ifelse(k_all$city=='Medina' | k_all$city=='Mercer Island', 1, 0) # 1은 부촌, 0은 그 외
+```
+
+## Mapping city variables
+```{r}
+#states_map <- map_data("state") # maps 패키지의 미국 주별 위.경도 state 데이터 data.fram으로 호출
+#str(states_map)
+#ggChoropleth(data = k_all[!is.na(k_all$price),],
+#             aes(group = city, fill = price, map_id = city), 
+#             map = states_map)
+
+#k_all[!is.na(k_all$price),] %>% select(city, price) %>% summarise(mean=mean(price), median=median(price))
+```
+
+## Adding 'sqft_lot per price' & 'sqft_living per price' variables
+
+부지 기준 평당 단가와 건물 기준 평당 단가 변수 생성
+```{r}
+livingp <- k_all[!is.na(k_all$price),] %>% group_by(zipcode) %>% summarise(mean_living_per_price=mean(price/sqft_living), mean_lot_per_price=mean(price/sqft_lot))
+k_all <- left_join(k_all, livingp, by = 'zipcode') %>% as.data.table
+
+k_pp1 <- ggplot(k_all[!is.na(k_all$price),], aes(x = reorder(city, living_per_price, FUN = mean), y = living_per_price))+
+  geom_bar(stat = 'summary', fun.y = 'mean', fill = 'blue') +
+  labs(x = 'city', y = 'living_per_price') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_y_continuous(labels = comma) 
+
+k_pp2 <- ggplot(k_all[!is.na(k_all$price),], aes(x = reorder(city, mean_lot_per_price, FUN = mean), y = lot_per_price))+
+  geom_bar(stat = 'summary', fun.y = 'mean', fill = 'blue') +
+  labs(x = 'city', y = 'lot_per_price') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_y_continuous(labels = comma) 
+
+grid.arrange(k_pp1, k_pp2)
+```
+
+도시별 가격을 비교했을 때 봤던 것과 같이 건물당 단가는 'Medina', 'Mercer Island', 'Bellevue' 순으로 동일하다.
+하지만 부지당 단가로 비교하면 건물당 단가일때는 4,9번째였던 'Seattle'과 'Issaquah'가 1,3번째로 높게 나온다.
+이들 두 곳은 건물 대비해서 부지가 넓어 보인다.
+'Medina'와 'Mercer Island','Belleuvue'는 부지보단 건물로 인해 가격이 높게 나오는 것 같다.
+
+## Adding 'sqft_living / sqft_lot' variables
+상기 부지당 평단가와 건물당 평단가를 비교한 상기의 변수에서 좀 더 확인하기 위해 추가했다.
+```{r}
+k_all$living_divide_lot <- k_all$sqft_living/k_all$sqft_lot
+
+ggplot(k_all[!is.na(k_all$price),], aes(x = reorder(city, living_divide_lot, FUN = mean), y = living_divide_lot))+
+  geom_bar(stat = 'summary', fun.y = 'mean', fill = 'blue') +
+  labs(x = 'city', y = 'living_divide_lot') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_y_continuous(breaks = seq(0, 5, by = 1),labels = comma) 
+```
+<br>
+부지당 평단가가 높았던'Issaquah'와 'Seattle'이 주거 공간 대비 부지의 공간이 넓다.
+```{r}
+#living15 변수 의미 파악 위한 작업
+
+#living15 <- k_all[!is.na(k_all$price),] %>% filter(city == 'Medina') %>% select(lat, long, sqft_living, sqft_living15, sqft_lot, sqft_lot15, living_divide_lot) %>% arrange(desc(lat))
+
+#Medina <- k_all[!is.na(k_all$price),] %>% filter(city == 'Medina') %>%  arrange(desc(lat))
+
+#k_all[!is.na(k_all$price),] %>% filter(city == 'Medina' , (lat >= 47.63 & lat< 47.64)) %>% select(lat, long, sqft_living, sqft_living15, sqft_lot, sqft_lot15) %>% arrange(desc(lat))
+```
+
+## Adding 'TotalRooms' variables
+'bathrooms' + 'bedrooms'해서 'totalrooms' 변수를 만들겠다.
+```{r}
+k_all$TotalRooms <- k_all$bahrooms + k_all$bedrooms
+```
+
+
+## Again Correalation with price
+
+FE 끝난 시점에서 상관 관계를 다시 확인해 보겠다.
+```{r}
+str(k_all3)
+k_all3 <- as.data.table(k_all) # 상관 행렬위해 임시 data.table 생성
+k_again.numericVars <- which(sapply(k_all3, is.numeric))
+k_again.numericVarnames <- names(k_again.numericVars)
+cat('there are', length(k_again.numericVars), 'numeric variables')
+```
+
+```{r}
+k_again.all.numVar <- k_all3[, ..k_again.numericVars]
+k_again.cor.numVar <- cor(k_again.all.numVar, use = 'pairwise.complete.obs', method = 'spearman')
+
+k_again.cor.sorted <- as.matrix(sort(k_again.cor.numVar[, 'price'], decreasing = TRUE))
+k_again.corHigh <- names(which(apply(k_again.cor.sorted, 1, function(x) abs(x) > 0)))
+k_again.cor.numVar <- k_again.cor.numVar[k_again.corHigh, k_again.corHigh]
+corrplot.mixed(k_again.cor.numVar,
+               tl.col = 'black', 
+               tl.pos = 'lt',
+               tl.cex = 0.7,
+               cl.cex = 0.7,
+               number.cex = .5)
+```
+
+# Preparing data for modeling
+
+## Drop variables
+
+모델링에 상관도가 낮은 변수들을 제거하겠다.
+
+```{r}
+dropVars <- c('zipcode')
+
+k_all <- k_all %>% select(-dropVars)
+```
+
+## Removing Outliers
+```{r}
+outlier <- k_all[c(2776,5109,8913,13810,7247,3135), c('price','city','sqft_living','sqft_lot','living_per_price','lot_per_price','living_divide_lot')]
+outlier
+#2776, 5109는 대조군으로 두고 면적 대비 가격이 낮았던 '8913',' '13810', '7247'과 view가 0등급인데 가격이 높았던 '3135'를 이상치로 정하고 데이터를 확인해 보겠다.
+```
+
+대조군 대비 '8913', '13810'의 부지당 평단가가 너무 낮다. 대조군이 100단위인 반면, 이 두 이상치는 1,2자리이다.
+이상치로 잡고 제거하겠다.
+
+```{r}
+k_all <- k_all[-c(8913,13810),]
+```
+
+## preprocessing
+```{r}
+k_all[, Yrmbuy:=factor(Yrmbuy)]
+k_all[, zipcode:=factor(zipcode)]
+k_all[, city:=factor(city)]
+k_all[, mecity:=factor(mecity)]
+k_all[, waterfront:=factor(waterfront)]
+k_all[, IsNew:=factor(IsNew)]
+k_all[, Remod:=factor(Remod)]
+k_all[, view:=factor(view)]
+k_all[, grade:=factor(grade)]
+k_all[, floors:=factor(floors)]
+k_all[, bathrooms:=factor(bathrooms)]
+k_all[, bedrooms:=factor(bedrooms)]
+k_all[, TotalRooms:=factor(TotalRooms)]
+
+cat_vars <- c('waterfront', 'Yrmbuy','mecity','city','IsNew','condition','Remod','view','grade','floors', 'zipcode', 'TotalRooms') # 가져갈 변수
+del_vars <- c('price','Yrbuy','Mobuy','date', 'yr_built','bathrooms','bedrooms','yr_renovated') #제거할 변수
+num_vars <- setdiff(colnames(k_all), c(cat_vars, del_vars))  #del_var 제외 변수 추출
+
+# 수치형 변수 표준화
+X_train_num <- k_all[!is.na(k_all$price), num_vars, with=F]
+X_test_num <- k_all[is.na(k_all$price), num_vars, with=F]
+
+mean.tr <- apply(X_train_num, 2, mean)
+sd.tr <- apply(X_train_num, 2, sd)
+
+X_train_num <- scale(X_train_num, center = mean.tr, scale = sd.tr)
+X_test_num <- scale(X_test_num, center = mean.tr, scale = sd.tr)
+
+X_train <- model.matrix(~.-1, data=cbind(X_train_num, k_all[!is.na(k_all$price), cat_vars, with=F]))
+X_test <- model.matrix(~.-1, data = cbind(X_test_num, k_all[is.na(k_all$price), cat_vars, with=F]))
+Y_train <- log(k_all[!is.na(k_all$price), price])
+```
+
+# Modeling
+
+## LASSO
+```{r lasso1}
+RMSE_exp <- function (data, lev = NULL, model = NULL) {
+  out <- sqrt(mean((exp(data$obs) - exp(data$pred))^2))
+  names(out) <- "RMSE_exp"
+  out
+}
+
+tic('LASSO')
+set.seed(0418)
+k_control <- trainControl(method = 'cv', number = 5, summaryFunction = RMSE_exp)
+tuneGrid <- expand.grid(alpha = 1, lambda = c(0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1))
+fit.lasso <- train(x = as.matrix(X_train), y= Y_train,
+                   method = 'glmnet', 
+                   metric = 'RMSE',
+                   maximize = FALSE,
+                   trControl = k_control,
+                   tuneGrid = tuneGrid)
+```
+
+```{r lasso2, fig.height=15}
+toc()
+
+fit.lasso
+
+fit.lasso$bestTune
+
+min(fit.lasso$results$RMSE_exp)
+```
+
+```{r}
+lasso.varimp <- varImp(fit.lasso, scale = F)
+lasso.imp <- lasso.varimp$importance
+lasso.importance <- data.frame(variable = rownames(lasso.imp), importance = lasso.imp$Overall) %>% 
+  arrange((importance))
+lasso.importance$variable <- factor(lasso.importance$variable, levels = lasso.importance$variable, labels = lasso.importance$variable)
+
+num.vars.selected <- length(which(lasso.importance$importance!=0))
+num.vars.not.selected <- length(which(lasso.importance$importance==0))
+cat('Lasso uses', num.vars.selected, 'variables in its model, and did not select', num.vars.not.selected, 'variables')
+
+lasso.importance[which(lasso.importance$importance!=0),] %>% 
+  ggplot(aes(x=variable, y=importance, fill=variable)) + 
+                            geom_bar(alpha=0.5, stat='identity') + 
+                            coord_flip() + # 가로 barplot
+                            theme_light() + theme(legend.position = "none")
+
+as.character(lasso.importance$variable[which(lasso.importance$importance==0)])
+```
+
+
+```{r lasso3}
+
+predictions_lasso <- exp(predict(fit.lasso, X_test))
+head(predictions_lasso)
+
+submission_lasso <- read.csv('./kako 2nd/sample_submission.csv')
+submission_lasso$price <- predictions_lasso
+write.csv(submission_lasso, file = 'submission_lasso.csv', row.names = F)
+```
+
+
+## XGBoost
+
+```{r}
+tuneGrid <- expand.grid(
+  max_depth = c(6, 60),  #default: 6
+  subsample = c(0.8, 1), #default: 1
+  colsample_bytree = c(0.9, 1) #default: 1
+)
+
+RMSE_exp <- function(preds, dtrain) {
+  labels <- xgboost::getinfo(dtrain, 'label')
+  err <- sqrt(mean((exp(labels) -exp(preds))^2))
+  return(list(metric = 'RMSE_exp', value = err))
+}
+
+# Dmatrix로 testing & training data 분리
+dtrain <- xgb.DMatrix(data = as.matrix(X_train), label = Y_train)
+dtest <- xgb.DMatrix(data = as.matrix(X_test))
+results <- list(val_rmse = rep(0, nrow(tuneGrid)),
+                nrounds = rep(0, nrow(tuneGrid)))
+
+for ( i in 1:nrow(tuneGrid)){
+  params <- list(
+    objective = 'reg:linear',
+    metric = 'rmse',
+    booster = 'gbtree',
+    eta = 0.01, #default: 0.3
+    gamma = 0,  #default: 0
+    min_child_weight =1, #default: 1
+    max_depth = tuneGrid[i, 'max_depth'],
+    subsample = tuneGrid[i, 'subsample'],
+    colsample_bytree = tuneGrid[i, 'colsample_bytree']
+  )
+}
+```
+
+** cross validation **
+```{r}
+# tic('xgbcv')
+xgbcv <- xgb.cv(params = params, 
+                   data = dtrain, 
+                   nrounds = 10000, 
+                   nfold = 5,
+                   feval = RMSE_exp,
+                   print_every_n = 100,
+                   early_stopping_rounds = 100,
+                   maximize = F,
+                   seed=4018)
+
+# toc()
+results[['val_rmse']][i] <- unlist(xgbcv$evaluation_log[xgbcv$best_iteration, 'test_RMSE_exp_mean'])
+results[['nrounds']][i] <- xgbcv$best_iteration
+```
+
+```{r}
+min.index <- which.min(results[['val_rmse']])
+tuneGrid[min.index,]
+cbind(tuneGrid, RMSE = unlist(results[['val_rmse']]))
+```
+
+```{r}
+default_param <- list(objective = 'reg:linear',
+                        booster = 'gbtree',
+                        eta = 0.01,
+                        gamma = 0,
+                        min_child_weight = 1,
+                        max_depth         = tuneGrid[min.index, "max_depth"],
+                        subsample         = tuneGrid[min.index, "subsample"],
+                        colsample_bytree  = tuneGrid[min.index, "colsample_bytree"]
+                        )
+
+fit.xgb <- xgb.train(data=dtrain,
+                     params = default_param,
+                     nrounds = results[['nrounds']][min.index],
+                     seed = 4018)
+
+predictions_xgb <- exp(predict(fit.xgb, dtest))
+head(predictions_xgb)
+```
+```{r}
+submission_xgb <- read.csv('./kako 2nd/sample_submission.csv')
+submission_xgb$price <- predictions_xgb
+write.csv(submission_xgb, file = 'submission_xgb.csv', row.names = F)
+```
+
+## Ensemble
+ Lasso와 XGBoost의 결과값 앙상블
+```{r}
+k_sub.avg <- data.frame(ID=k_test.labels, price = (2*predictions_xgb + predictions_lasso)/3)
+head(k_sub.avg)
+write.csv(k_sub.avg, file = 'XGBoostEnsemble_average.csv', row.names = F)
+```
+
+
+
+
+---
+
+
+
+
+
+# 별도 modeling 과정. 이후 절취
+## Preprocessing predictor variables
+```{r}
+k_numericVarnames <- k_numericVarnames[!(k_numericVarnames %in% c('Yrbuy','Mobuy','city','price','waterfront','grade','Remod','IsNew','condition'))]  #문자형이거나 실제적으로 범주형인 변수 제외
+k_numericVarnames <- append(k_numericVarnames, c('Age','living_divide_lot','living_per_price','lot_per_price'))
+# FE때 만든 변수들 포함
+k_DFnumeric <- k_all[, names(k_all) %in% k_numericVarnames] 
+k_DFnumeric <- k_all %>% select(k_numericVarnames)
+
+k_DFfactors <- k_all[, !(names(k_all) %in% k_numericVarnames)]
+k_DFfactors <- k_DFfactors[, names(k_DFfactors) == 'price'] # price 변수 제외
+k_DFfactors <- k_DFfactors[, names(k_DFfactors) != c('living_per_price','lot_per_price')] 
+cat('there are', length(k_DFnumeric), 'numeric variables, and', length(k_DFfactors), 'factor variables')
+```
+
+## Skewness and normalizing of the numeric predictors
+
+```{r}
+for(i in 1:ncol(k_DFnumeric)){
+        if (abs(skew(k_DFnumeric[,i])) > 0.8){
+                DFnumeric[,i] <- log(DFnumeric[,i] +1)
+        }
+}
+```
+
+** Normalizing the data **
+```{r}
+k_prenum <- preProcess(k_DFnumeric, method = c('center','scale'))
+print(k_prenum)
+```
+```{r}
+k_DFnorm <- predict(k_prenum, k_DFnumeric)
+dim(k_DFnorm)
+```
+
+## One hot encoding the categorical variables
+
+```{r}
+k_DFdummies <- as.data.frame(model.matrix(~.-1, k_DFfactors))
+dim(k_DFdummies)
+```
+
+## Removing levels with few or no observation in train or test
+```{r}
+# test셋에 없는 변수가 있는지 확인
+k_ZerocolTest <- which(colSums(k_DFdummies[(nrow(k_all[!is.na(k_all$price),])+1):nrow(k_all),])==0)
+colnames(k_DFdummies[k_ZerocolTest])
+k_DFdummies <- k_DFdummies[,-k_ZerocolTest]  
+```
+
+```{r}
+# train셋에 없는 변수가 있는지 확인
+k_ZerocolTrain <- which(colSums(k_DFdummies[1:nrow(k_all[!is.na(k_all$price),]),])==0)
+colnames(k_DFdummies[k_ZerocolTrain])
+k_DFdummies <- k_DFdummies[,-k_ZerocolTrain]
+```
+
+train 셋에서 10미만의 값을 갖는 변수 추출
+```{r}
+k_fewOnes <- which(colSums(k_DFdummies[1:nrow(k_all[!is.na(k_all$price),]),]) < 10)
+colnames(k_DFdummies[k_fewOnes])
+k_DFdummies <- k_DFdummies[,-k_fewOnes]
+dim(k_DFdummies)
+```
+```{r}
+k_combined <- cbind(k_DFnorm, k_DFdummies)
+```
+
+## Dealing with skewness of response variable
+```{r}
+skew(k_all$price)
+```
+
+```{r}
+qqnorm(log(k_all$price))
+qqline(k_all$price)
+```
+
+기울기가 우편향으로 너무 높아 log 변환을 하겠다.
+```{r}
+#k_all$price <- log(k_all$price)
+skew(k_all$price)
+```
+
+
+```{r}
+qqnorm(k_all$price)
+qqline(k_all$price)
+```
+
+skew가 낮아지고, Q-Q plot도 좋아졌다
+
+## Composing train and test sets
+
+```{r}
+k_train1 <- k_combined[!is.na(k_all$price),]
+k_test1 <- k_combined[is.na(k_all$price),]
+```
+
+# Modeling
+
+## Lasso regression model
+```{r}
+set.seed(20190417)
+k_control <- trainControl(method = 'cv', number = 5)
+k_lassoGrid <- expand.grid(alpha = 1, lambda = seq(0.001, 0.1, by = 0.0005))
+
+k_lasso_mod <- train(x = k_train1, y = k_all$price[!is.na(k_all$price)], method = 'glmnet', trControl=k_control, tuneGrid = k_lassoGrid)
+k_lasso_mod$bestTune
+```
+
+```{r}
+min(k_lasso_mod$results$RMSE)
+```
+
+```{r}
+k_lassoVarImp <- varImp(k_lasso_mod, scale = F)
+k_lassoImportance <- k_lassoVarImp$importance
+
+k_varsSelected <- length(which(k_lassoImportance$Overall!=0))
+k_varsNotSElected <- length(which(k_lassoImportance$Overall==0))
+
+cat('Lasso uses', k_varsSelected, 'variables in its model, and did not select', k_varsNotSElected, 'variables')
+```
+
+```{r}
+k_LassoPred <- predict(k_lasso_mod, k_test1)
+k_predictions_lasso <- exp(k_LassoPred)
+head(k_predictions_lasso)
+```
+
+## XGBoost model
+
+```{r}
+xgb_grid = expand.grid(nrounds = 1000,
+                       eta = c(0.1, 0.05, 0.01),
+                       max_depth = c(2, 3, 4, 5, 6),
+                       gamma = 0,
+                       colsample_bytree = 1,
+                       min_child_weight = c(1, 2, 3, 4, 5),
+                       subsample = 1
+                       )
+```
+
+
+최적의 매개변수 찾기
+```{r}
+# Error code
+#k_xgb_carat <- train(x = train1, y = k_all$price[!is.na(k_all$price)], method = 'xgbtree', trControl = k_control, tungGrid = xgb_grid)
+#k_xgb_caret$bestTune
+```
+
+
+```{r}
+k_label_train <- k_all$price[!is.na(k_all$price)]
+
+# Dmatrix로 testing & training data 분리
+k_dtrain <- xgb.DMatrix(data = as.matrix(k_train1), label = k_label_train)
+k_dtest <- xgb.DMatrix(data = as.matrix(k_test1))
+```
+
+
+```{r}
+k_default_param <- list(objective = 'reg:linear',
+                        booster = 'gbtree',
+                        eta = 0.05,
+                        gamma = 0,
+                        max_depth = 3,
+                        min_child_weight = 4,
+                        subsample = 1,
+                        colsample_bytree = 1
+                        )
+```
+
+
+** cross validation **
+```{r}
+k_xgbcv <- xgb.cv( params = k_default_param, 
+                   data = k_dtrain, 
+                   nrounds = 500, 
+                   nfold = 5,
+                   showsd = T,
+                   stratified = T,
+                   print_every_n = 40,
+                   early_stopping_rounds = 10,
+                   maximize = F)
+```
+
+
+CV로 찾은 Best iteration으로 모델 트레이닝
+```{r}
+k_xgb_mod <- xgb.train(data = k_dtrain, params = k_default_param, nrounds = 454)
+```
+
+
+```{r}
+k_XGBpred <- predict(k_xgb_mod, k_dtest)
+k_predictions_XGB <- exp(k_XGBpred)
+head(k_predictions_XGB)
+```
+
+변수 중요도 시각화
+```{r}
+library(Ckmeans.1d.dp)
+k_mat <- xgb.importance(feature_names = colnames(k_train1), model = k_xgb_mod)
+xgb.ggplot.importance(importance_matrix = k_mat[1:20], rel_to_first = TRUE)
+```
+
+## Averaging predictions
+
+```{r}
+k_sub.avg <- data.frame(ID = k_test.labels, price = (k_predictions_XGB + 2*k_predictions_lasso)/3)
+head(k_sub.avg)
+```
+
+
+```{r}
+write.csv(k_sub.avg, file = 'average.csv', row.names = F)
+```
+

@@ -1,0 +1,25 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1557986972088.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "2201355417",
+    "id" : "F51CA666",
+    "lastKnownWriteTime" : 1558418806,
+    "last_content_update" : 1558418806235,
+    "path" : "F:/R/kaggle/house-price-prediction-with-r-eda-fe.Rmd",
+    "project_path" : "house-price-prediction-with-r-eda-fe.Rmd",
+    "properties" : {
+        "cursorPosition" : "42,16",
+        "scrollLine" : "36"
+    },
+    "read_only" : false,
+    "read_only_alternatives" : [
+    ],
+    "relative_order" : 3,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_markdown"
+}

@@ -1,0 +1,6 @@
+"0","for (i in 1:nrow(all)) {"
+"0","        if(is.na(all$LotFrontage[i])){"
+"0","          all$LotFrontage[i] <- as.integer(median(all$LotFrontage[all$Neighborhood==all$Neighborhood[i]],"
+"0","                                                  na.rm = TRUE))"
+"0","        }"
+"0","}"

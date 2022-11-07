@@ -1,0 +1,1 @@
+"0","all$PoolQC[is.na(all$PoolQC)] <- 'None'"

@@ -1,0 +1,731 @@
+{
+  "cells": [
+    {
+      "metadata": {
+        "_uuid": "3bf37d9a3ae5cd281a44f6d50c5a61aeadf93592"
+      },
+      "cell_type": "markdown",
+      "source": "본 커널은 과거에 기존 Kaggle Titanic Competition에 연습을 위해 작성해본 커널을 바탕으로 Building해서 작성했습니다. \n타이타닉 competition의 공개된 커널을 참고한 부분이 포함되어 있습니다. \n\n**Stacking 의 모델링에 대해서는 :https://www.kaggle.com/arthurtok/introduction-to-ensembling-stacking-in-python 다음 커널을 참고하였고, 상당부분 인용하였습니다. **"
+    },
+    {
+      "metadata": {
+        "_uuid": "8f2839f25d086af736a60e9eeb907d3b93b6e0e5",
+        "_cell_guid": "b1076dfc-b9ad-4769-8c92-a6c4dae69d19",
+        "trusted": true
+      },
+      "cell_type": "code",
+      "source": "# This Python 3 environment comes with many helpful analytics libraries installed\n# It is defined by the kaggle/python docker image: https://github.com/kaggle/docker-python\n# For example, here's several helpful packages to load in \nimport numpy as np # linear algebra\nimport pandas as pd # data processing, CSV file I/O (e.g. pd.read_csv)\nimport matplotlib.pyplot as plt\nimport seaborn as sns\nimport plotly.offline as py\npy.init_notebook_mode(connected=True)\nimport plotly.graph_objs as go\nimport plotly.tools as tls\n\nimport warnings\nwarnings.filterwarnings('ignore')\n\nimport re\nimport os\nprint(os.listdir(\"../input\"))\n\n#modeling\nfrom subprocess import check_output\nfrom sklearn.svm import SVC\nfrom sklearn import svm, neighbors\nfrom sklearn.linear_model import LogisticRegression\nfrom sklearn.ensemble import (RandomForestClassifier, VotingClassifier, AdaBoostClassifier,\nGradientBoostingClassifier,ExtraTreesClassifier)\nfrom sklearn.tree import DecisionTreeClassifier\nfrom sklearn.discriminant_analysis import LinearDiscriminantAnalysis\nfrom sklearn.model_selection import KFold\nfrom sklearn.model_selection import train_test_split\nfrom sklearn import preprocessing\n\nimport xgboost as xbg\n\ndf_train = pd.read_csv(\"../input/train.csv\")\ndf_test = pd.read_csv(\"../input/test.csv\")\n# Any results you write to the current directory are saved as output.",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "_cell_guid": "79c7e3d0-c299-4dcb-8224-4455121ee9b0",
+        "collapsed": true,
+        "_uuid": "d629ff2d2480ee46fbb7e2d37f6b5fab8052498a",
+        "trusted": false
+      },
+      "cell_type": "markdown",
+      "source": "Nans (Null Data)찾아보기"
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "d217b6405c8122701387ce4d3df28f64fb1696ee"
+      },
+      "cell_type": "code",
+      "source": "nulls=df_train.isnull().sum()\nprint(nulls)\n",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "35122db5c912c8641aa340397ef6dd6fce8205b3"
+      },
+      "cell_type": "code",
+      "source": "print(df_test.isnull().sum())\n#(추후 fare 한개만 따로 채워주기)",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "1ee3e95977754d63c2e14d1debd2ba7b071cdd0a"
+      },
+      "cell_type": "code",
+      "source": "length = len(df_train)\npercentage = (nulls/length)*100\nprint (percentage)",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "_uuid": "e19fc206200bb3f97a2ca83426f2126cf70c9d98"
+      },
+      "cell_type": "markdown",
+      "source": "Null Value가 Cabin의 경우 약 77프로로 상당한 양의 데이터가 유실 (혹은 없음) 되었음을 알 수 있고, age의 경우 약 20프로임. Embarked의 경우 0.22프로로 미미한 수준임을 알 수 있으며 나머지 column엔 모든 데이터가 존재. "
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "5c8bf65e90bba9ebb90dcbd368406c357b238a2f"
+      },
+      "cell_type": "code",
+      "source": "#plotting\nx = percentage.values\ny = np.array(percentage.index)\n\nplt.figure(figsize=(16, 5))\nsns.set(font_scale=1.2)\nax = sns.barplot(y, x, palette='hls', log=False)\nax.set(xlabel='Feature', ylabel='(Percentage of Nulls)', title='Number of Nulls')",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "a63f004e6ed3c6133d3513e0ef49785a36e27753"
+      },
+      "cell_type": "code",
+      "source": "df_train.head()",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "613c24eb30d00072877ebb6a7ac81f3f609e1287"
+      },
+      "cell_type": "code",
+      "source": "for i in np.array(df_train.columns):\n    print (\"{0} has {1} attributes\".format(i, len(df_train[i].unique())))",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "_uuid": "30478106270516b9d7b2ad3c2c49684e45b152d2"
+      },
+      "cell_type": "markdown",
+      "source": "여기서 Survived는 label이며\n- **Pclass, Sex, Embarked**는 확실히 **Categorical feature**라 볼 수 있음. \n- **Name** 과 **Ticket, Cabin**은 자세히 살펴볼 필요가 있을 것으로 보이며\n- **Age, SibSp, Parch, Fare**는 일단 **numeric value **봐도 될 것이라 보임. \n\n먼저 Ticket 과 Name을 살펴본 후\n Null value들을 추정하여 채우고, 추가적으로 Add할 수 있는 Feature 가 있는지 살펴보고,\nCategorical feature를 encoding 한 후 모델링을 진행하도록 하겠다. "
+    },
+    {
+      "metadata": {
+        "_uuid": "2a40adae29752b7c2abb964a26a0155478999a22"
+      },
+      "cell_type": "markdown",
+      "source": "**Ticket**\n티켓의 앞부분에 코드명으로 표시된 것과 티켓 번호를 분리해 살펴보겠다."
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "4c50a97cb85b0d0761c7d94a98c124005f3802a4"
+      },
+      "cell_type": "code",
+      "source": "df = pd.concat([df_train.drop(\"Survived\", axis = 1), df_test], ignore_index = True)\nlabel = df_train[\"Survived\"]\nindex = df_train.shape[0]",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "4397bdc363e3a99b8df638556cf3137131d8e7ea"
+      },
+      "cell_type": "code",
+      "source": "df[\"Ticket_number\"] = df[\"Ticket\"].apply(lambda x: x.split()[-1])\ndf[\"Ticket_code\"] = df[\"Ticket\"].apply(lambda x: x.split()[0] if len(x.split())!= 1 else \"No Code\")\ndf[\"Ticket_code\"].unique()",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "_uuid": "c697d8c851e48e684cbda1569f43b7334b081494"
+      },
+      "cell_type": "markdown",
+      "source": "티켓 번호 앞의 코드는 출발지, 도착지나 기타 탑승자에 대한 정보를 담고있을 확률이 크다.  한번 자세히 살펴보다"
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "97b0ecba0b04d81db2f338f8425ec9640f80d723"
+      },
+      "cell_type": "code",
+      "source": "df['Ticket_code'].value_counts()",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "_uuid": "09af7acfc138e644f09b46c1197fed7f82fdaa67"
+      },
+      "cell_type": "markdown",
+      "source": "- 하나의 코드만 기재된 경우와 둘 이상의 코드가 기재되어있는 경우로 나눌 수 있다. \n- 둘 이상의 코드가 기재된 경우, / 혹은 . 를 기준으로 앞/뒤로 지명을 나타내는 것으로 추정되는 코드가 나뉘어 있으며,  / 와 . 가 혼용되어 있는 듯 보인다. \n- 같은 지명이라도 표기가 다르게 된 경우가 있는 듯 하다. SOTON, STON 등이 그 예이며, C.A.와 같은 경우 CA 와 같은 코드인지, 아니면 C와 A라는 두 개의 코드를 '.' 구분자를 사용해 나눈것인지 알기 어렵다. \n\n섣부른 판단을 하기에 정보가 부족하니 일단 명확하게 **일치하는 코드명이라 여겨지는 것들을 처리. 우선 코드명의 맨 뒤에 붙는 '.'는 제거해도 될 것으로 보인다. **"
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "02245a51578936f00c3ded8c1ef221e341503cca"
+      },
+      "cell_type": "code",
+      "source": "df[\"Ticket_code\"]= df[\"Ticket_code\"].apply(lambda a: a[:-1] if a[-1]==\".\" else a)\ndf['Ticket_code'].value_counts()",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "_uuid": "2bc3432daad3d3ecc4099c9753899cc292869951"
+      },
+      "cell_type": "markdown",
+      "source": "다음으로, '/'와 '.' 각각, 또 둘 모두를 기준으로 코드를 나누었을 때 개별적으로 존재하는 코드가 무엇이 있는지 살펴보겠다. (Ex: SC/A.3  -> SC와 A.3, SC와 A 와 3, 등)\n**이 부분을 더 효율적이고 정확하게 처리할 수 있는 방법에 대한 아이디어가 있다면 공유바랍니다**"
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "c5e2d74a3586abab706102cd920e6ff685ff7bf3"
+      },
+      "cell_type": "code",
+      "source": "#/와 . 모두 분리\nimport re\ncodes= [i for i in df[\"Ticket_code\"].unique() if i!= \"No Code\"]\ndef split_codes(code):\n    return re.split('[^a-zA-Z0-9]+', code)\n    \nnew_codes = []\nfor i in codes:\n    for j in  split_codes(i):\n        new_codes.append(j)\n        \npd.Series(new_codes).value_counts()",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "7ba63989ed3679ba977469f26d66e0f204165081",
+        "scrolled": true
+      },
+      "cell_type": "code",
+      "source": "#/만 분리\ndef split_codes2(code):\n    return re.split('/+', code)\n    \nnew_codes2 = []\nfor i in codes:\n    for j in  split_codes2(i):\n        new_codes2.append(j)\n        \npd.Series(new_codes2).value_counts()",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "5e0e80056bb364cbd7e1e86d1e86e26118a37256"
+      },
+      "cell_type": "code",
+      "source": "#.만 분리\ndef split_codes3(code):\n    return re.split('\\.+', code)\n    \nnew_codes3 = []\nfor i in codes:\n    for j in  split_codes3(i):\n        new_codes3.append(j)\n        \npd.Series(new_codes3).value_counts()",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "_uuid": "2416e07a7cee5b84640b4696490ada0d48046eef"
+      },
+      "cell_type": "markdown",
+      "source": "정보가 부족해 섣불리 판단하기 어렵지만, 일단 가장 공통적으로 나타나는 코드가 많은 방법을 통해 (/와 . 모두 분리) Code를 분리해보겠다. / 또는 . 를 통해 두 가지 이상의 코드가 기재되어있는 경우 첫 번째 코드만을 추출해 하나의 Attribute으로 만들어보겠다. "
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "20cdf41369199413253477d98de21812dad84b8f"
+      },
+      "cell_type": "code",
+      "source": "df[\"Has_ticket_codes\"] = df[\"Ticket_code\"].apply(lambda x: 0 if x==\"No Code\" else 1)\ndf[\"Has_only_1_codes\"] = df[\"Ticket_code\"].apply(lambda x: 0 if len(re.split('[^a-zA-Z0-9]+', x)) !=1 else 1)\ndf[\"Number_of_codes\"] = df[\"Ticket_code\"].apply(lambda x: 0 if x==\"No Code\" else len(re.split('[^a-zA-Z0-9]+', x)))\n\ndf[\"Ticket_code_HEAD\"] = df[\"Ticket_code\"].apply(lambda x: \"No Code\" if x == \"No Code\" else re.split('[^a-zA-Z0-9]+', x)[0])\ndf[\"Ticket_code_TAIL\"] = df[\"Ticket_code\"].apply(lambda x: \"No Code\" if x == \"No Code\" else re.split('[^a-zA-Z0-9]+', x)[-1])\n\ndf['Ticket_code_HEAD'].value_counts()",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "05572ee839d64bdd4cc874cb5c2765142d17072f"
+      },
+      "cell_type": "code",
+      "source": "df['Ticket_code_TAIL'].value_counts()",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "_uuid": "05332140d60407e5c4837211c2898651eb32410d"
+      },
+      "cell_type": "markdown",
+      "source": "**Name**\n다음으로 이름에 포함된 정보를 추출해보겠다. \n생존과 관련해서 이름으로부터 추출할 수 있을 법 한 정보는 우선 호칭 (성별 등의 정보 포함 가능)이 있을 것으로 보인다.\n*이 부분은 Baseine kernal : https://www.kaggle.com/youhanlee/youhan-s-baseline 을 참고하였습니다. "
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "6c4605bc5ba136bbb18f23bfa928ecf1260d0090"
+      },
+      "cell_type": "code",
+      "source": "df[\"Name\"]\ndf[\"Initial\"] = df.Name.str.extract('([A-Za-z]+)\\.')",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "6714e7ca8836ad0018a2d4c9ac82bb5e09c9dee6"
+      },
+      "cell_type": "code",
+      "source": "pd.crosstab(df[\"Initial\"], df[\"Sex\"]).T.style.background_gradient(cmap='summer_r')",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "_uuid": "608c0e6abcea259eab5e4c9cb821e20c9ab0bae3"
+      },
+      "cell_type": "markdown",
+      "source": "상당수의 데이터가 Miss / Mrs, MR/Master에 치중되어있음을 볼 수 있으며 나머지의 경우엔 극소수로, 결과에 큰 영향을 미치지 않을 것으로 보임. "
+    },
+    {
+      "metadata": {
+        "_uuid": "27f8a265011a2ec5c8301298f10ea252fcac3fb2"
+      },
+      "cell_type": "markdown",
+      "source": ""
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "54f60bfcf8675cf5732d10c434a065e60d1934f6"
+      },
+      "cell_type": "code",
+      "source": "df['Initial'].replace(['Mlle','Mme','Ms','Dr','Major','Lady','Countess','Jonkheer','Col','Rev','Capt','Sir','Don', 'Dona'],\n                        ['Miss','Miss','Miss','Mr','Mr','Mrs','Mrs','Other','Other','Other','Mr','Mr','Mr', 'Mr'],inplace=True)",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "f564fbd27d04a28d69c58ef7517b1870b0bed265"
+      },
+      "cell_type": "code",
+      "source": "train = df[:length]\ntrain[\"Survived\"] = label\ntrain.groupby('Initial').mean()[\"Survived\"].plot.bar()",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "775e5bff67b748d01155ff3b30f7ac4a375861f4"
+      },
+      "cell_type": "code",
+      "source": "train.groupby('Initial').mean()",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "_uuid": "300f8f36bd78de3c84c67928758a21e1cfa33c3e"
+      },
+      "cell_type": "markdown",
+      "source": "이외에도 SibSp, Parch 는 이니셜과 어느정도의 관계를 가지는 것으로 보임"
+    },
+    {
+      "metadata": {
+        "_uuid": "ec3d2be266120d0d65f3ad54a06372d9612574b3"
+      },
+      "cell_type": "markdown",
+      "source": "**Cabin 살펴보기**\n\nCabin은 많은 수의 데이터가 없지만, 탑승자가 위치해있던 좌석/호실의 위치와 생존 여부가 관련이 있을 수 있으므로 살펴보도록 하고, Null Data를 채울 수 있는 실마리를 찾아보도록 하겠다. "
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "scrolled": true,
+        "_uuid": "9cbc6b5c137ac2bf40b4f00eb81e6790bfe99fa0"
+      },
+      "cell_type": "code",
+      "source": "print (\"{} percent of Cabin data is null\".format(df[\"Cabin\"].isnull().sum()/len(df)*100))",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "c3042928d6db39a74fdd011457a8085c1f15f3ff"
+      },
+      "cell_type": "code",
+      "source": "train_cabin = train[train[\"Cabin\"].notnull()]\ntrain_cabin[\"Cabin_Initial\"] = train_cabin[\"Cabin\"].apply(lambda x: x[0])\ntrain_cabin[\"Cabin_Number\"] = train_cabin[\"Cabin\"].apply(lambda x: (x[1:].split(\" \")[0]))\ntrain_cabin[\"Cabin_Number\"].replace(\"\", -1, inplace = True)\ntrain_cabin[\"Cabin_Number\"] = train_cabin[\"Cabin_Number\"].apply(lambda x: int(x))\n\ntrain_cabin[\"Cabin_Initial\"].value_counts()",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "036e2a55e5701bda89651e026f0ddd33550d9b5f"
+      },
+      "cell_type": "code",
+      "source": "train_cabin.groupby(\"Cabin_Initial\").mean()",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "1a6e54fc4d74204b914e4f7658afe848de0152f7"
+      },
+      "cell_type": "code",
+      "source": "train_cabin.groupby(\"Cabin_Initial\").mean()[\"Survived\"].plot.bar()",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "_uuid": "6880a230a2ab89f82d0d9bb708b02f758be120d2"
+      },
+      "cell_type": "markdown",
+      "source": "단, Cabin Initial 이 확보된 전체 데이터의 양이 크지 않다는점을 고려해야 함. (특히 G, T의 경우)"
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "4aaf3e84d8ee97bb84bb96332b34305f30f5b4d2"
+      },
+      "cell_type": "code",
+      "source": "df_cabin = df[df[\"Cabin\"].notnull()]\ndf_cabin[\"Cabin_Initial\"] = df_cabin[\"Cabin\"].apply(lambda x: x[0])\ndf_cabin[\"Cabin_Number\"] = df_cabin[\"Cabin\"].apply(lambda x: (x[1:].split(\" \")[0]))\ndf_cabin[\"Cabin_Number\"].replace(\"\", -1, inplace = True)\ndf_cabin[\"Cabin_Number\"] = df_cabin[\"Cabin_Number\"].apply(lambda x: int(x))\n\ndf_cabin.groupby(\"Cabin_Initial\").mean()",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "_uuid": "ee66b68fc94e3817a94ffa54042e4bae54cf70b6"
+      },
+      "cell_type": "markdown",
+      "source": "**Cabin Initial** 과 **Fare**의 관계가 심상치 않아보인다. Cabin number는 호실 번호이지만 Cabin Initial 은 선박 내 선실의 위치, 등급 등과 관련이 있을 가능성이 크므로 Null valu를 꼭 채워 Attribute으로 사용하면 좋을 듯 하다. "
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "a416a364f843b7be63e08da8cdbc061f1c749598"
+      },
+      "cell_type": "code",
+      "source": "#Heatmap 그려보기\ndf_cabin_heatmap = df_cabin[[\"Pclass\", \"Age\", \"SibSp\", \"Parch\", \"Fare\", \"Cabin_Number\", \"Cabin_Initial\"]]\ndf_cabin_heatmap['Cabin_Initial'] = df_cabin_heatmap['Cabin_Initial'].map({'A': 0, 'B': 1, \"C\":2, \"D\":3, \"E\":4, \"F\":5, \"G\":7, \"H\":8})\n\ncolormap = plt.cm.RdBu\nplt.figure(figsize=(14, 12))\nplt.title('Correlation, y=1.05, size=15')\nsns.heatmap(df_cabin_heatmap.astype(float).corr(), linewidths=0.1, vmax=1.0,\n           square=True, cmap=colormap, linecolor='white', annot=True, annot_kws={\"size\": 16})\n",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "_uuid": "c47f1d49225306f3b5dd338bf8dbde4e63491bef"
+      },
+      "cell_type": "markdown",
+      "source": "Cabin 의 Initial은 이후 imputation을 통해 예측하여 채워 Attribute으로 사용하도록 하겠다."
+    },
+    {
+      "metadata": {
+        "_uuid": "78cbc84c97f39e6b8462b8c9dc3f758db4d38e3f"
+      },
+      "cell_type": "markdown",
+      "source": ""
+    },
+    {
+      "metadata": {
+        "_uuid": "77f9ff43622eb05a4e5817ae6703546539016176"
+      },
+      "cell_type": "markdown",
+      "source": "**Null Value estimation**"
+    },
+    {
+      "metadata": {
+        "_uuid": "e1a70ae372b941e36a1ffc0268f4c707511c2648"
+      },
+      "cell_type": "markdown",
+      "source": "**먼저 가장 Null Value가 적은 embarked부터. **총 2개뿐이 Null value이므로 가장 많은 수를 차지하는 \"S\" 로 다체하겠다. "
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "5654c16fcfbe78f4d218b74e9ad015e1c14f585a"
+      },
+      "cell_type": "code",
+      "source": "df[\"Embarked\"].isnull().sum()",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "56b7ef571f9fff6004a098780c508ad1253277c4"
+      },
+      "cell_type": "code",
+      "source": "df['Embarked'].fillna('S', inplace=True)",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "_uuid": "48702b7764f7ba237f31a8631593bc2ef9931848"
+      },
+      "cell_type": "markdown",
+      "source": "**Categorical Data 를 다듬고 Label encoding 하기**"
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "a06e1f2c49204944c0152929c19f571250a8efa6"
+      },
+      "cell_type": "code",
+      "source": "from sklearn import preprocessing\n#Drop non-using columns\ndf = df.drop([\"Name\", \"Ticket\"], axis = 1)\ncategorical = [\"Sex\", \"Embarked\",\"Ticket_code\", \"Ticket_code_HEAD\", \"Ticket_code_TAIL\", \"Initial\"] \n\nlbl = preprocessing.LabelEncoder()\nfor col in categorical:\n    df[col].fillna('Unknown')\n    df[col] = lbl.fit_transform(df[col].astype(str))\ndf.head()",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "824348a95d4f459c56a47baf79854e95484677e9"
+      },
+      "cell_type": "markdown",
+      "source": "**마지막으로 Age 의 결측치를 채워보도록 하겠다. Age를 가늠할 수 있는 요소는 가족의 수 또는 Initial이 있다. **"
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "ae653d1b69a8b52823202b506b905ec56684f4de"
+      },
+      "cell_type": "code",
+      "source": "df.groupby(\"Initial\").mean()",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "9053dfb08f1aab4c2b7dd0aaa0175c46a66ddcfe"
+      },
+      "cell_type": "code",
+      "source": "#Initial 을 가지고 Fillna\ndf[\"Age\"] = df.groupby(\"Initial\").transform(lambda x: x.fillna(x.mean()))[\"Age\"]",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "73963061bcc2db97f92e101650608de05617c50a"
+      },
+      "cell_type": "markdown",
+      "source": "**기타 Atribute 생성**\n(추후 추가예정)"
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "1cb346ad931dbf2c882e34d26592f712d0f982bd"
+      },
+      "cell_type": "code",
+      "source": "df['FamilySize'] = df['SibSp'] + df['Parch'] + 1\ndf[\"Isalone\"] = df[\"FamilySize\"].apply(lambda x: 0 if x!=1 else 1)\ndf= df.drop(\"Ticket_number\", axis = 1)\ndf['Fare'].fillna((df['Fare'].median()), inplace=True)\n\n\n#Age / Fare Category 추가해보기\n\ndf.head()",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "3ea69302e1ab11739188c53715c860dd36f55286"
+      },
+      "cell_type": "code",
+      "source": "#Cabin Initial imputation\ndf[\"Has_Cabin\"] = df[\"Cabin\"].apply(lambda x: 0 if type(x)==float else 1)\ndf[\"Cabin_Initial\"] = df[\"Cabin\"].apply(lambda x: x[0] if pd.notnull(x) else x)\ndf[\"Cabin_number\"] = df[\"Cabin\"].apply(lambda x: x[-1] if pd.notnull(x) else x)\ndf = df.drop(\"Cabin\", axis = 1)",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "0b1e587bad1ac3088808e55e771120e0295c078f"
+      },
+      "cell_type": "code",
+      "source": "#Imputation of Cabin initial\ntrain_cabin = df[df[\"Cabin_Initial\"].notnull()]\ntest_cabin = df[df[\"Cabin_Initial\"].isnull()]\n\ntr = train_cabin.drop([\"Cabin_Initial\", \"Cabin_number\"], axis = 1)\nla = train_cabin[\"Cabin_Initial\"]\nte = test_cabin.drop([\"Cabin_Initial\", \"Cabin_number\"], axis = 1)\nclf = VotingClassifier([('lsvc',svm.LinearSVC()),\n                        ('knn',neighbors.KNeighborsClassifier()),\n                        ('rfor',RandomForestClassifier()),\n                        ('lr',LogisticRegression()),\n                        ('LDA',LinearDiscriminantAnalysis()),\n                        ('DC',DecisionTreeClassifier()),\n                        ])\n\n\nclf.fit(tr, la)\npredicted_initial = clf.predict(te)\nte[\"predicted_inital\"] = predicted_initial\n\nfor i in range(0, len(df)):\n    if type(df[\"Cabin_Initial\"].iloc[i])==float:\n        df.ix[i, \"Cabin_Initial\"] = te[\"predicted_inital\"].ix[i]\n\ndf[\"Cabin_Initial\"] = lbl.fit_transform(df[col].astype(str))\ndf = df.drop([\"Cabin_number\",\"PassengerId\"], axis = 1)\n",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "622c49a4a44db0ba3202f38e92c40f10c5fbbf64"
+      },
+      "cell_type": "code",
+      "source": "colormap = plt.cm.RdBu\nplt.figure(figsize = (14, 12))\nplt.title(\"Correlation- Pearson\")\nsns.heatmap(df.corr(), square = True, cmap = colormap, annot=True)",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "_uuid": "c73fbb564f02d05b5f31d40fd3abdf9e3deedf19"
+      },
+      "cell_type": "markdown",
+      "source": "Modeling"
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "d73986df08ca00a53b964d04296c06c00847a1f3"
+      },
+      "cell_type": "code",
+      "source": "ntrain = length\nntest = len(df)-length\n\ny_train = label.ravel()\nx_train  = df[:length].values\nx_test = df[length:].values\n\nSEED = 0\nNFOLDS = 5\nkf = KFold(n_splits=NFOLDS)",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "b617304c9d7db935baa4324f89f54e9692c64649"
+      },
+      "cell_type": "code",
+      "source": "#내가 참고한 커널은 각 모델을 더 용이하게 사용하기 위해 클래스를 정의하였다\nclass SklearnHelper(object):\n    def __init__(self, clf, seed = 0, params=None):\n        params[\"random_state\"] = seed\n        self.clf = clf(**params)\n        \n    def train(self, x_train, y_train):\n        self.clf.fit(x_train, y_train)\n    \n    def predict(self, x):\n        return self.clf.predict(x)\n    \n    def fit(self, x, y):\n        return self.clf.fit(x, y)\n        \n    def feature_importances(self, x, y):\n        importance = []\n        for i in self.clf.fit(x, y).feature_importances_:\n            importance.append(i)\n        return importance\n        ",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "1b6d1c22823310821cda253c9704238d934cc619"
+      },
+      "cell_type": "code",
+      "source": "def get_oof(clf, X, y, X_test):\n    oof_train = np.zeros((ntrain,))\n    oof_test = np.zeros((ntest,))\n    oof_test_skf = np.empty((NFOLDS, ntest))\n\n    for i, (train_index, test_index) in enumerate(kf.split(X)):\n        print('\\nFold {}'.format(i))\n        x_tr = X[train_index]\n        y_tr = y[train_index]\n        x_te = X[test_index]\n\n        clf.train(x_tr, y_tr)\n\n        oof_train[test_index] = clf.predict(x_te)\n        oof_test_skf[i, :] = clf.predict(X_test)\n\n    oof_test[:] = oof_test_skf.mean(axis=0)\n    return oof_train.reshape(-1, 1), oof_test.reshape(-1, 1)\n\n#Out of Fold 를 가지고 KFold로 Predict한 뒤 그것들의 평균을 통해 OOF Predicion을 산출함",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "e2461ed1054acaac37409d937c0dc02b7c3a09c8"
+      },
+      "cell_type": "code",
+      "source": "#Parameter 설정\n#Random Forest\nrf_params = {\n    \"n_jobs\": -1,\n    \"n_estimators\": 500,\n    \"warm_start\": True,\n    #\"max_features\":0.2,\n    \"max_depth\":6,\n    \"min_samples_leaf\": 2, \n    \"max_features\": \"sqrt\",\n    \"verbose\":0\n}\n\n#Extra Trees\net_params = {\n    \"n_jobs\": -1,\n    \"n_estimators\": 500,\n    #\"max_features\":0.5,\n    \"max_depth\":8,\n    \"min_samples_leaf\": 2, \n    \"verbose\":0\n}\n\n#AdaBoost\nada_params = {\n    \"n_estimators\" : 500,\n    \"learning_rate\" : 0.75\n}\n\n#Gradient Boosting\ngb_params = {\n    \"n_estimators\":500,\n    #\"max_features\" : 0.2\n    \"max_depth\" : 5,\n    \"min_samples_leaf\" : 2,\n    \"verbose\" : 0\n}\n\n#SVC -Support Vector Classifier\n\nsvc_params = {\n    'kernel' : 'linear',\n    'C' : 0.025\n    }",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "e22d59d4d1c03e442c215bc15949d5a2d39b3a45"
+      },
+      "cell_type": "code",
+      "source": "rf = SklearnHelper(clf = RandomForestClassifier, seed = SEED, params = rf_params)\net = SklearnHelper(clf = ExtraTreesClassifier, seed = SEED, params = et_params)\nada = SklearnHelper(clf = AdaBoostClassifier, seed = SEED, params = ada_params)\ngb = SklearnHelper(clf = GradientBoostingClassifier, seed = SEED, params = gb_params)\n\nsvc = SklearnHelper(clf = SVC, seed = SEED, params = svc_params)",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "49992fc2e133551c6224efb7f9b3f8305367ea02"
+      },
+      "cell_type": "code",
+      "source": "#First Level Prediction - OOF train and test\nprint (\"Generating OOFs\")\n\net_oof_train, et_oof_test = get_oof(et, x_train, y_train, x_test) # Extra Trees\nrf_oof_train, rf_oof_test = get_oof(rf,x_train, y_train, x_test) # Random Forest\nada_oof_train, ada_oof_test = get_oof(ada, x_train, y_train, x_test) # AdaBoost \ngb_oof_train, gb_oof_test = get_oof(gb,x_train, y_train, x_test) # Gradient Boost\nsvc_oof_train, svc_oof_test = get_oof(svc,x_train, y_train, x_test) # Support Vector Classifier\n\nprint(\"Training is complete\")",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "18cf276d0b39d24cf6efab652daad4bdcf41abf0"
+      },
+      "cell_type": "code",
+      "source": "rf_feature = rf.feature_importances(x_train,y_train)\net_feature = et.feature_importances(x_train, y_train)\nada_feature = ada.feature_importances(x_train, y_train)\ngb_feature = gb.feature_importances(x_train,y_train)",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "ed35f202abda60e1eeccef4a37ab9b79b0e3cc4f"
+      },
+      "cell_type": "code",
+      "source": "cols = df[:length].columns.values\nfeature_df = pd.DataFrame({\n    \"features\":cols,\n    'Random Forest feature importances': rf_feature,\n     'Extra Trees  feature importances': et_feature,\n      'AdaBoost feature importances': ada_feature,\n    'Gradient Boost feature importances': gb_feature\n})",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "78de96d9b803246d2d2556ac2d48ca6873f48b47"
+      },
+      "cell_type": "code",
+      "source": "# Scatter plot \ntrace = go.Scatter(\n    y = feature_df['Random Forest feature importances'].values,\n    x = feature_df['features'].values,\n    mode='markers',\n    marker=dict(\n        sizemode = 'diameter',\n        sizeref = 1,\n        size = 25,\n#       size= feature_dataframe['AdaBoost feature importances'].values,\n        #color = np.random.randn(500), #set color equal to a variable\n        color = feature_df['Random Forest feature importances'].values,\n        colorscale='Portland',\n        showscale=True\n    ),\n    text = feature_df['features'].values\n)\ndata = [trace]\n\nlayout= go.Layout(\n    autosize= True,\n    title= 'Random Forest Feature Importance',\n    hovermode= 'closest',\n#     xaxis= dict(\n#         title= 'Pop',\n#         ticklen= 5,\n#         zeroline= False,\n#         gridwidth= 2,\n#     ),\n    yaxis=dict(\n        title= 'Feature Importance',\n        ticklen= 5,\n        gridwidth= 2\n    ),\n    showlegend= False\n)\nfig = go.Figure(data=data, layout=layout)\npy.iplot(fig,filename='scatter2010')\n\n# Scatter plot \ntrace = go.Scatter(\n    y = feature_df['Extra Trees  feature importances'].values,\n    x = feature_df['features'].values,\n    mode='markers',\n    marker=dict(\n        sizemode = 'diameter',\n        sizeref = 1,\n        size = 25,\n#       size= feature_dataframe['AdaBoost feature importances'].values,\n        #color = np.random.randn(500), #set color equal to a variable\n        color = feature_df['Extra Trees  feature importances'].values,\n        colorscale='Portland',\n        showscale=True\n    ),\n    text = feature_df['features'].values\n)\ndata = [trace]\n\nlayout= go.Layout(\n    autosize= True,\n    title= 'Extra Trees Feature Importance',\n    hovermode= 'closest',\n#     xaxis= dict(\n#         title= 'Pop',\n#         ticklen= 5,\n#         zeroline= False,\n#         gridwidth= 2,\n#     ),\n    yaxis=dict(\n        title= 'Feature Importance',\n        ticklen= 5,\n        gridwidth= 2\n    ),\n    showlegend= False\n)\nfig = go.Figure(data=data, layout=layout)\npy.iplot(fig,filename='scatter2010')\n\n# Scatter plot \ntrace = go.Scatter(\n    y = feature_df['AdaBoost feature importances'].values,\n    x = feature_df['features'].values,\n    mode='markers',\n    marker=dict(\n        sizemode = 'diameter',\n        sizeref = 1,\n        size = 25,\n#       size= feature_dataframe['AdaBoost feature importances'].values,\n        #color = np.random.randn(500), #set color equal to a variable\n        color = feature_df['AdaBoost feature importances'].values,\n        colorscale='Portland',\n        showscale=True\n    ),\n    text = feature_df['features'].values\n)\ndata = [trace]\n\nlayout= go.Layout(\n    autosize= True,\n    title= 'AdaBoost Feature Importance',\n    hovermode= 'closest',\n#     xaxis= dict(\n#         title= 'Pop',\n#         ticklen= 5,\n#         zeroline= False,\n#         gridwidth= 2,\n#     ),\n    yaxis=dict(\n        title= 'Feature Importance',\n        ticklen= 5,\n        gridwidth= 2\n    ),\n    showlegend= False\n)\nfig = go.Figure(data=data, layout=layout)\npy.iplot(fig,filename='scatter2010')\n\n# Scatter plot \ntrace = go.Scatter(\n    y = feature_df['Gradient Boost feature importances'].values,\n    x = feature_df['features'].values,\n    mode='markers',\n    marker=dict(\n        sizemode = 'diameter',\n        sizeref = 1,\n        size = 25,\n#       size= feature_dataframe['AdaBoost feature importances'].values,\n        #color = np.random.randn(500), #set color equal to a variable\n        color = feature_df['Gradient Boost feature importances'].values,\n        colorscale='Portland',\n        showscale=True\n    ),\n    text = feature_df['features'].values\n)\ndata = [trace]\n\nlayout= go.Layout(\n    autosize= True,\n    title= 'Gradient Boosting Feature Importance',\n    hovermode= 'closest',\n#     xaxis= dict(\n#         title= 'Pop',\n#         ticklen= 5,\n#         zeroline= False,\n#         gridwidth= 2,\n#     ),\n    yaxis=dict(\n        title= 'Feature Importance',\n        ticklen= 5,\n        gridwidth= 2\n    ),\n    showlegend= False\n)\nfig = go.Figure(data=data, layout=layout)\npy.iplot(fig,filename='scatter2010')",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "869474c11322738f2bfa3c0a251c5c48ae56ee8c"
+      },
+      "cell_type": "code",
+      "source": "feature_df[\"mean\"] = feature_df.mean(axis = 1)\nfeature_df.head()",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "a25f90daf598685e81683d389227d201632d1a16"
+      },
+      "cell_type": "code",
+      "source": "\ndata =[\n    go.Bar(\n    x =feature_df[\"features\"].values,\n    y = feature_df[\"mean\"].values\n    )\n]\n\nlayout = go.Layout(\n    title = \"Feature Importance-Mean\",\n    yaxis =dict(\n        title = \"Importance\", \n    )\n)\n\nfig = go.Figure(data = data, layout = layout)\npy.iplot(fig, filename = \"BAR\")",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "aa856a6be9f8099c695c14645fb921baf335c8db"
+      },
+      "cell_type": "code",
+      "source": "base_predictions_train = pd.DataFrame( {'RandomForest': rf_oof_train[:,0],\n     'ExtraTrees': et_oof_train[:,0],\n     'AdaBoost': ada_oof_train[:,0],\n      'GradientBoost': gb_oof_train[:,0]\n    })\nbase_predictions_train.head(10)\n\ndf.head()",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "8fb9e1173e18df79bfbbabf023320c106c425caf"
+      },
+      "cell_type": "code",
+      "source": "#Train에 ADD하기\nx_train = np.concatenate((x_train, et_oof_train, rf_oof_train, ada_oof_train, gb_oof_train, svc_oof_train), axis = 1)\nx_test = np.concatenate((x_test, et_oof_test, rf_oof_test, ada_oof_test, gb_oof_test, svc_oof_test), axis=1)",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "564717297f66bb740b8782aa531edc04e8403215"
+      },
+      "cell_type": "code",
+      "source": "from sklearn.model_selection import train_test_split\nxtrain, xvalid, ytrain, yvalid = train_test_split(\n      x_train, y_train, test_size=0.30, random_state=5)",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "8361720b9d761cd51fedc66ae912a91f7b6965fb"
+      },
+      "cell_type": "code",
+      "source": "#VotingClasifier\nfrom sklearn.linear_model import LogisticRegression\nfrom subprocess import check_output\nfrom sklearn.ensemble import RandomForestClassifier, VotingClassifier\nfrom sklearn.tree import DecisionTreeClassifier\nfrom sklearn import svm, neighbors\nfrom sklearn.discriminant_analysis import LinearDiscriminantAnalysis\nfrom sklearn.ensemble import GradientBoostingClassifier\nfrom xgboost import XGBClassifier\nfrom sklearn.ensemble import AdaBoostClassifier\nfrom sklearn.naive_bayes import GaussianNB\nclf = VotingClassifier([('lsvc',svm.LinearSVC()),\n                        ('knn',neighbors.KNeighborsClassifier()),\n                        ('rfor',RandomForestClassifier()),\n                        ('lr',LogisticRegression()),\n                        ('LDA',LinearDiscriminantAnalysis()),\n                        ('DC',DecisionTreeClassifier()),\n                        ('GB',GradientBoostingClassifier()),\n                        ('XGB',XGBClassifier()),\n                        ('Ada', AdaBoostClassifier()),\n                        ('GNB', GaussianNB())\n                        ])\nclf.fit(xtrain, ytrain)\nconfidence = clf.score(xvalid, yvalid)\nprint('Confidence: ',confidence)\n",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "f5d2ffa24733bbdbc9c76cbd53762867595afb35"
+      },
+      "cell_type": "code",
+      "source": "predictions = clf.predict(x_test)",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "metadata": {
+        "trusted": true,
+        "_uuid": "a2b2ddcc4bb3df92af25d0bfb605779916a84934"
+      },
+      "cell_type": "code",
+      "source": "submission = pd.DataFrame({'PassengerId': df_test['PassengerId'],\n                    'Survived': predictions})\nsubmission.to_csv('Ensemble_with_OOF_190131_ver7.csv', index=False)",
+      "execution_count": null,
+      "outputs": []
+    }
+  ],
+  "metadata": {
+    "kernelspec": {
+      "display_name": "R",
+      "language": "R",
+      "name": "ir"
+    },
+    "language_info": {
+      "name": "python",
+      "version": "3.6.6",
+      "mimetype": "text/x-python",
+      "codemirror_mode": {
+        "name": "ipython",
+        "version": 3
+      },
+      "pygments_lexer": "ipython3",
+      "nbconvert_exporter": "python",
+      "file_extension": ".py"
+    }
+  },
+  "nbformat": 4,
+  "nbformat_minor": 1
+}

@@ -1,0 +1,1 @@
+{"frames":[{"character_number":0,"end_character_number":0,"end_line_number":0,"file":"","func":"ifelse(k_all$city == \"Medina\" & \"Mercer Island\", 1, 0)","line_number":0}],"message":"Error in k_all$city == \"Medina\" & \"Mercer Island\" : \n  operations are possible only for numeric, logical or complex types\n"}

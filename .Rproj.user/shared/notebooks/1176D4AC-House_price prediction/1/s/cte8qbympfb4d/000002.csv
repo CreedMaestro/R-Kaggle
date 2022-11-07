@@ -1,0 +1,13 @@
+"0","sum(table(all$Fireplaces)) #합산한 개수가 총 개수와 같은지 확인
+"
+"1","[1]"
+"1"," 2917"
+"1","
+"
+"2","Warning message:
+"
+"2","In strsplit(code, ""\n"", fixed = TRUE) :"
+"2","
+ "
+"2"," input string 1 is invalid in this locale
+"

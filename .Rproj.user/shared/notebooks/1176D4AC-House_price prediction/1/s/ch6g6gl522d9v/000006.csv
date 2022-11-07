@@ -1,0 +1,9 @@
+"0","for(i in 1:ncol(DFnumeric)){
+        if (abs(skew(DFnumeric[,i])) > 0.8){
+                DFnumeric[,i] <- log(DFnumeric[,i] +1)
+        }
+}
+"
+"2","Error in Summary.factor(c(6L, 1L, 6L, 7L, 6L, 5L, 1L, 6L, 5L, 16L, 1L,  : 
+  ‘sum’ not meaningful for factors
+"

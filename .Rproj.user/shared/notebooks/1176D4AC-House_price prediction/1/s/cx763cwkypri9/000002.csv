@@ -1,0 +1,5 @@
+"0","cor(all$SalePrice[!is.na(all$SalePrice)], all$Age[!is.na(all$SalePrice)])"
+"1","[1]"
+"1"," -0.5090787"
+"1","
+"

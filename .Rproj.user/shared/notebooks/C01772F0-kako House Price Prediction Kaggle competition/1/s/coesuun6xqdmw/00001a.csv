@@ -1,0 +1,4 @@
+"0","library(tictoc)      # tic 함수
+"
+"2","Error in library(tictoc) : ‘tictoc’이라고 불리는 패키지가 없습니다
+"

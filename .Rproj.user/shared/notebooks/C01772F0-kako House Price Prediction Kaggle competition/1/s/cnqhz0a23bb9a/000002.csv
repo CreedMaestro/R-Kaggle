@@ -1,0 +1,5 @@
+"0","k_all$mecity <- ifelse(k_all$city=='Medina' & 'Mercer Island', 1, 0) # 1은 부촌, 0은 그 외
+"
+"2","Error in k_all$city == ""Medina"" & ""Mercer Island"" : 
+  operations are possible only for numeric, logical or complex types
+"

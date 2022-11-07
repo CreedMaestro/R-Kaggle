@@ -1,0 +1,1 @@
+"0","all$BsmtUnfSF[is.na(all$BsmtUnfSF)] <- 0"
